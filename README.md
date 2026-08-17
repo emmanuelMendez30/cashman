@@ -10,7 +10,7 @@ Control de compras diarias para la rifa semanal. Cada usuario ve solo sus propio
 
 No hay registro público: los usuarios se crean solo desde el panel de Supabase.
 
-**Copiar las llaves:** en **Project Settings → API** vas a encontrar la *Project URL* y la *anon public key*. Las necesitás en el siguiente paso.
+**Copiar las llaves:** en **Project Settings → API** vas a encontrar la *Project URL* y la *publishable key* (empieza con `sb_publishable_`). Las necesitás en el siguiente paso. Es una llave pública, pensada para viajar en el bundle del navegador: lo que protege los datos es el Row Level Security, no esconderla.
 
 ## 2. Correr en tu máquina
 
@@ -19,7 +19,7 @@ npm install
 cp .env.local.example .env.local
 ```
 
-Editá `.env.local` con la URL y la anon key de tu proyecto, y arrancá:
+Editá `.env.local` con la URL y la publishable key de tu proyecto, y arrancá:
 
 ```bash
 npm run dev
@@ -32,7 +32,7 @@ Abrí http://localhost:3000 — te va a mandar al login.
 Subí el proyecto a un repo de GitHub e importalo desde vercel.com. Cuando te pida las variables de entorno, cargá las mismas dos:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 
 Vercel detecta Next.js solo, no hay que configurar nada más. También podés hacerlo desde la terminal con `npx vercel`.
 
