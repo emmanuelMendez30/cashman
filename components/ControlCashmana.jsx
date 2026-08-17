@@ -48,17 +48,34 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
     // Traemos los clientes vigentes en esta semana con su fila de marcas
     // (si todavia no existe viene vacia) y los aplanamos a un solo objeto,
     // que es la forma que consume el resto del componente.
-    const { data, error } = await supabase
+    //
+    // El admin ve los de todos: el RLS ya se lo permite, pero solo para
+    // leer, asi que los ajenos se muestran sin controles.
+    let consulta = supabase
       .from("clientes")
-      .select("id, nombre, telefono, marcas(semana, lun, mar, mie, jue, vie, sab, nota)")
-      .eq("user_id", userId)
+      .select(
+        "id, nombre, telefono, user_id, marcas(semana, lun, mar, mie, jue, vie, sab, nota)"
+      )
       .lte("desde", semanaISO)
       .or(`hasta.is.null,hasta.gt.${semanaISO}`)
       .eq("marcas.semana", semanaISO)
       .order("created_at", { ascending: true });
 
+    if (!esAdmin) consulta = consulta.eq("user_id", userId);
+
+    const [{ data, error }, perfiles] = await Promise.all([
+      consulta,
+      esAdmin
+        ? supabase.from("perfiles").select("id, email")
+        : Promise.resolve({ data: [] }),
+    ]);
+
     if (error) setError("No se pudo cargar la lista. Recargá la página.");
     else {
+      const correos = Object.fromEntries(
+        (perfiles.data || []).map((p) => [p.id, p.email])
+      );
+
       setClientes(
         (data || []).map((c) => {
           const marca = c.marcas?.[0];
@@ -67,6 +84,8 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
             nombre: c.nombre,
             telefono: c.telefono ?? "",
             nota: marca?.nota ?? "",
+            esMio: c.user_id === userId,
+            duenio: correos[c.user_id] || "",
             ...Object.fromEntries(DIAS.map((d) => [d.key, marca?.[d.key] ?? false])),
           };
         })
@@ -74,7 +93,7 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
       setError("");
     }
     setCargando(false);
-  }, [semanaISO, supabase, userId]);
+  }, [semanaISO, supabase, userId, esAdmin]);
 
   useEffect(() => {
     cargar();
@@ -132,6 +151,8 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
         nombre: data.nombre,
         telefono: data.telefono ?? "",
         nota: "",
+        esMio: true,
+        duenio: email,
         ...Object.fromEntries(DIAS.map((d) => [d.key, false])),
       },
     ]);
@@ -254,6 +275,7 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
   function exportarExcel() {
     const filas = clientes.map((c) => {
       const fila = { Cliente: c.nombre, Teléfono: c.telefono || "" };
+      if (esAdmin) fila["Encargado"] = c.duenio;
       DIAS.forEach((d) => (fila[d.label] = c[d.key] ? "Sí" : ""));
       fila["Califica"] = califica(c) ? "Sí" : "No";
       fila["Notas"] = c.nota || "";
@@ -262,7 +284,7 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
 
     descargarExcel(
       filas,
-      [24, 16, ...DIAS.map(() => 6), 10, 34],
+      [24, 16, ...(esAdmin ? [26] : []), ...DIAS.map(() => 6), 10, 34],
       "Control",
       `control-cashmana-${semanaISO}.xlsx`
     );
@@ -367,8 +389,9 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
         </div>
       ) : clientes.length === 0 ? (
         <div className="text-center text-stone-400 text-sm py-16 border border-dashed border-stone-300 rounded-xl">
-          Todavía no cargaste clientes. Los que agregues quedan registrados
-          para todas las semanas siguientes.
+          {esAdmin
+            ? "Ningún usuario tiene clientes en esta semana."
+            : "Todavía no cargaste clientes. Los que agregues quedan registrados para todas las semanas siguientes."}
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
@@ -382,6 +405,11 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                   <th className="text-left px-3 py-3 font-medium min-w-[120px]">
                     Teléfono
                   </th>
+                  {esAdmin && (
+                    <th className="text-left px-3 py-3 font-medium">
+                      Encargado
+                    </th>
+                  )}
                   {DIAS.map((d) => (
                     <th
                       key={d.key}
@@ -413,8 +441,13 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                           editarCliente(cliente.id, "nombre", e.target.value)
                         }
                         onBlur={() => guardarCliente(cliente, "nombre")}
+                        readOnly={!cliente.esMio}
                         aria-label={`Nombre de ${cliente.nombre}`}
-                        className="w-full font-medium bg-transparent border border-transparent rounded-md px-2 py-1 hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        className={`w-full font-medium bg-transparent border border-transparent rounded-md px-2 py-1 focus:outline-none ${
+                          cliente.esMio
+                            ? "hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:ring-1 focus:ring-amber-400"
+                            : "cursor-default text-stone-600"
+                        }`}
                       />
                     </td>
                     <td className="px-3 py-2.5">
@@ -430,24 +463,37 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                           )
                         }
                         onBlur={() => guardarCliente(cliente, "telefono")}
+                        readOnly={!cliente.esMio}
                         placeholder="—"
                         aria-label={`Teléfono de ${cliente.nombre}`}
-                        className={`w-full text-xs bg-transparent border rounded-md px-2 py-1 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-400 ${
-                          telefonoValido(cliente.telefono)
-                            ? "border-transparent hover:border-stone-200 focus:border-stone-300"
-                            : "border-red-300 bg-red-50"
+                        className={`w-full text-xs bg-transparent border rounded-md px-2 py-1 focus:outline-none ${
+                          !telefonoValido(cliente.telefono)
+                            ? "border-red-300 bg-red-50"
+                            : cliente.esMio
+                              ? "border-transparent hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:ring-1 focus:ring-amber-400"
+                              : "border-transparent cursor-default text-stone-500"
                         }`}
                       />
                     </td>
+                    {esAdmin && (
+                      <td className="px-3 py-2.5 text-xs text-stone-500 whitespace-nowrap">
+                        {cliente.duenio}
+                      </td>
+                    )}
                     {DIAS.map((d) => (
                       <td key={d.key} className="px-2 py-2.5 text-center">
                         <button
                           onClick={() => toggleDia(cliente, d.key)}
+                          disabled={!cliente.esMio}
                           className={`w-6 h-6 rounded-md border flex items-center justify-center mx-auto transition ${
                             cliente[d.key]
-                              ? "bg-emerald-500 border-emerald-500"
-                              : "border-stone-300 hover:border-stone-400"
-                          }`}
+                              ? cliente.esMio
+                                ? "bg-emerald-500 border-emerald-500"
+                                : "bg-emerald-200 border-emerald-200"
+                              : cliente.esMio
+                                ? "border-stone-300 hover:border-stone-400"
+                                : "border-stone-200"
+                          } ${cliente.esMio ? "" : "cursor-default"}`}
                           aria-label={`${d.label} - ${cliente.nombre}`}
                         >
                           {cliente[d.key] && (
@@ -471,18 +517,25 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                         value={cliente.nota || ""}
                         onChange={(e) => editarNota(cliente.id, e.target.value)}
                         onBlur={() => guardarNota(cliente)}
-                        placeholder="Ej: martes no completó cuota"
-                        className="w-full text-xs border border-stone-200 rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        readOnly={!cliente.esMio}
+                        placeholder={cliente.esMio ? "Ej: martes no completó cuota" : ""}
+                        className={`w-full text-xs border rounded-md px-2 py-1.5 focus:outline-none ${
+                          cliente.esMio
+                            ? "border-stone-200 focus:ring-1 focus:ring-amber-400"
+                            : "border-transparent cursor-default text-stone-500"
+                        }`}
                       />
                     </td>
                     <td className="px-2 py-2.5 text-center">
-                      <button
-                        onClick={() => eliminarCliente(cliente.id)}
-                        className="text-stone-300 hover:text-red-500 transition"
-                        aria-label={`Eliminar ${cliente.nombre}`}
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      {cliente.esMio && (
+                        <button
+                          onClick={() => eliminarCliente(cliente.id)}
+                          className="text-stone-300 hover:text-red-500 transition"
+                          aria-label={`Eliminar ${cliente.nombre}`}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

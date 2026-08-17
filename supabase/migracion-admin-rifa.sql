@@ -128,13 +128,21 @@ create policy "ver numeros de rifa"
 -- Es idempotente: los números ya asignados no se tocan nunca, así que
 -- llamarla mil veces devuelve siempre lo mismo. Solo reparte entre los
 -- clientes que calificaron y todavía no tienen número.
+-- Postgres no deja cambiar las columnas que devuelve una función con
+-- `create or replace`, así que primero se borra.
+drop function if exists public.asignar_numeros_rifa(date);
+
 create or replace function public.asignar_numeros_rifa(p_semana date)
 returns table (
   nombre       text,
   telefono     text,
   duenio       text,
   numero       integer,
-  numero_rifa  text
+  numero_rifa  text,
+  -- Cuándo se dio de alta el cliente. Sirve para comprobar a simple vista
+  -- que el sorteo fue al azar: ordenando por esta columna, los números
+  -- tienen que salir salteados.
+  creado       timestamptz
 )
 language plpgsql
 security definer
@@ -216,7 +224,8 @@ begin
            c.telefono,
            p.email,
            r.numero,
-           lpad((r.numero % 100)::text, 2, '0')
+           lpad((r.numero % 100)::text, 2, '0'),
+           c.created_at
     from public.rifa_numeros r
     join public.clientes c on c.id = r.cliente_id
     join public.perfiles p on p.id = c.user_id

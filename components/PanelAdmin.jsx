@@ -23,6 +23,7 @@ export default function PanelAdmin({ email }) {
   const [padron, setPadron] = useState([]);
   const [semana, setSemana] = useState(() => lunesDe(new Date()));
   const [rifa, setRifa] = useState([]);
+  const [orden, setOrden] = useState("nombre");
   const [cargando, setCargando] = useState(true);
   const [sorteando, setSorteando] = useState(false);
   const [error, setError] = useState("");
@@ -87,16 +88,35 @@ export default function PanelAdmin({ email }) {
     );
   }
 
+  // Tres ordenes, cada uno para algo distinto: por numero se busca al
+  // ganador, por nombre se reparte, y por alta se comprueba que el sorteo
+  // fue al azar (contra ese orden los numeros tienen que salir salteados).
+  const porAlta = (a, b) =>
+    new Date(a.creado) - new Date(b.creado) ||
+    a.nombre.localeCompare(b.nombre, "es");
+
+  const rifaOrdenada = [...rifa].sort((a, b) => {
+    if (orden === "nombre") return a.nombre.localeCompare(b.nombre, "es");
+    if (orden === "alta") return porAlta(a, b);
+    return a.numero - b.numero;
+  });
+
+  // Posicion de cada cliente en el orden de alta, para mostrarla como #.
+  const posicionAlta = new Map(
+    [...rifa].sort(porAlta).map((c, i) => [c.nombre, i + 1])
+  );
+
   function exportarRifa() {
     descargarExcel(
-      rifa.map((c) => ({
+      rifaOrdenada.map((c) => ({
         Número: c.numero_rifa,
         Cliente: c.nombre,
+        "Orden de alta": posicionAlta.get(c.nombre),
         Teléfono: c.telefono || "",
         Encargado: c.duenio,
         "N° interno": c.numero,
       })),
-      [10, 26, 16, 26, 12],
+      [10, 26, 14, 16, 26, 12],
       "Rifa",
       `rifa-${semanaISO}.xlsx`
     );
@@ -297,10 +317,34 @@ export default function PanelAdmin({ email }) {
                     <thead>
                       <tr className="bg-stone-100 text-stone-600 text-xs uppercase tracking-wide">
                         <th className="text-left px-4 py-3 font-medium w-24">
-                          Número
+                          <button
+                            onClick={() => setOrden("numero")}
+                            className={`uppercase tracking-wide hover:text-stone-900 ${
+                              orden === "numero" ? "text-stone-900 underline" : ""
+                            }`}
+                          >
+                            Número
+                          </button>
                         </th>
                         <th className="text-left px-4 py-3 font-medium">
-                          Cliente
+                          <button
+                            onClick={() => setOrden("nombre")}
+                            className={`uppercase tracking-wide hover:text-stone-900 ${
+                              orden === "nombre" ? "text-stone-900 underline" : ""
+                            }`}
+                          >
+                            Cliente
+                          </button>
+                        </th>
+                        <th className="text-left px-4 py-3 font-medium w-28">
+                          <button
+                            onClick={() => setOrden("alta")}
+                            className={`uppercase tracking-wide hover:text-stone-900 ${
+                              orden === "alta" ? "text-stone-900 underline" : ""
+                            }`}
+                          >
+                            Orden alta
+                          </button>
                         </th>
                         <th className="text-left px-4 py-3 font-medium">
                           Teléfono
@@ -311,7 +355,7 @@ export default function PanelAdmin({ email }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {rifa.map((c) => (
+                      {rifaOrdenada.map((c) => (
                         <tr
                           key={c.numero}
                           className="border-t border-stone-100 hover:bg-stone-50"
@@ -327,6 +371,9 @@ export default function PanelAdmin({ email }) {
                             )}
                           </td>
                           <td className="px-4 py-2.5 font-medium">{c.nombre}</td>
+                          <td className="px-4 py-2.5 text-stone-400 text-xs font-mono">
+                            #{posicionAlta.get(c.nombre)}
+                          </td>
                           <td className="px-4 py-2.5 text-stone-600">
                             {c.telefono || (
                               <span className="text-stone-300">—</span>
