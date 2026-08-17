@@ -14,49 +14,19 @@ import {
   ChevronRight,
   LogOut,
 } from "lucide-react";
-import * as XLSX from "xlsx";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { DIAS, lunesDe, aISO, rangoLegible, califica } from "@/lib/semanas";
+import { descargarExcel, descargarTxt } from "@/lib/descargas";
 
-const DIAS = [
-  { key: "lun", label: "Lun" },
-  { key: "mar", label: "Mar" },
-  { key: "mie", label: "Mié" },
-  { key: "jue", label: "Jue" },
-  { key: "vie", label: "Vie" },
-  { key: "sab", label: "Sáb" },
-];
-
-function lunesDe(fecha) {
-  const d = new Date(fecha);
-  const dia = d.getDay();
-  const diff = dia === 0 ? -6 : 1 - dia;
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function aISO(fecha) {
-  const y = fecha.getFullYear();
-  const m = String(fecha.getMonth() + 1).padStart(2, "0");
-  const d = String(fecha.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function rangoLegible(lunes) {
-  const sabado = new Date(lunes);
-  sabado.setDate(sabado.getDate() + 5);
-  const fmt = (f) =>
-    f.toLocaleDateString("es", { day: "numeric", month: "short" });
-  return `${fmt(lunes)} — ${fmt(sabado)}`;
-}
-
-export default function ControlCashmana({ email, userId }) {
+export default function ControlCashmana({ email, userId, esAdmin = false }) {
   const supabase = createClient();
   const router = useRouter();
 
   const [semana, setSemana] = useState(() => lunesDe(new Date()));
   const [clientes, setClientes] = useState([]);
   const [nombre, setNombre] = useState("");
+  const [telefono, setTelefono] = useState("");
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
 
@@ -71,7 +41,7 @@ export default function ControlCashmana({ email, userId }) {
     // que es la forma que consume el resto del componente.
     const { data, error } = await supabase
       .from("clientes")
-      .select("id, nombre, marcas(semana, lun, mar, mie, jue, vie, sab, nota)")
+      .select("id, nombre, telefono, marcas(semana, lun, mar, mie, jue, vie, sab, nota)")
       .eq("user_id", userId)
       .lte("desde", semanaISO)
       .or(`hasta.is.null,hasta.gt.${semanaISO}`)
@@ -86,6 +56,7 @@ export default function ControlCashmana({ email, userId }) {
           return {
             id: c.id,
             nombre: c.nombre,
+            telefono: c.telefono ?? "",
             nota: marca?.nota ?? "",
             ...Object.fromEntries(DIAS.map((d) => [d.key, marca?.[d.key] ?? false])),
           };
@@ -123,8 +94,13 @@ export default function ControlCashmana({ email, userId }) {
     // Alta en el padron: queda registrado desde esta semana en adelante.
     const { data, error } = await supabase
       .from("clientes")
-      .insert({ nombre: limpio, desde: semanaISO, user_id: user.id })
-      .select("id, nombre")
+      .insert({
+        nombre: limpio,
+        telefono: telefono.trim() || null,
+        desde: semanaISO,
+        user_id: user.id,
+      })
+      .select("id, nombre, telefono")
       .single();
 
     if (error) {
@@ -140,12 +116,48 @@ export default function ControlCashmana({ email, userId }) {
       {
         id: data.id,
         nombre: data.nombre,
+        telefono: data.telefono ?? "",
         nota: "",
         ...Object.fromEntries(DIAS.map((d) => [d.key, false])),
       },
     ]);
     setNombre("");
+    setTelefono("");
     setError("");
+  }
+
+  // Nombre y telefono viven en el padron, asi que el cambio vale para todas
+  // las semanas. Cualquier usuario puede corregir los suyos, no solo el admin.
+  function editarCliente(id, campo, texto) {
+    setClientes((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, [campo]: texto } : c))
+    );
+  }
+
+  async function guardarCliente(cliente, campo) {
+    const valor = (cliente[campo] || "").trim();
+
+    if (campo === "nombre" && !valor) {
+      setError("El nombre no puede quedar vacío.");
+      cargar();
+      return;
+    }
+
+    const { error } = await supabase
+      .from("clientes")
+      .update({ [campo]: valor || null })
+      .eq("id", cliente.id);
+
+    if (error) {
+      setError(
+        error.code === "23505"
+          ? "Ya tenés otro cliente con ese nombre."
+          : "No se pudo guardar el cambio. Probá de nuevo."
+      );
+      cargar();
+    } else {
+      setError("");
+    }
   }
 
   async function toggleDia(cliente, diaKey) {
@@ -216,52 +228,28 @@ export default function ControlCashmana({ email, userId }) {
     router.refresh();
   }
 
-  const califica = (c) => DIAS.every((d) => c[d.key]);
   const califican = clientes.filter(califica);
-
-  function descargar(blob, nombreArchivo) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = nombreArchivo;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
 
   function exportarExcel() {
     const filas = clientes.map((c) => {
-      const fila = { Cliente: c.nombre };
+      const fila = { Cliente: c.nombre, Teléfono: c.telefono || "" };
       DIAS.forEach((d) => (fila[d.label] = c[d.key] ? "Sí" : ""));
       fila["Califica"] = califica(c) ? "Sí" : "No";
       fila["Notas"] = c.nota || "";
       return fila;
     });
 
-    const hoja = XLSX.utils.json_to_sheet(filas);
-    hoja["!cols"] = [
-      { wch: 24 },
-      ...DIAS.map(() => ({ wch: 6 })),
-      { wch: 10 },
-      { wch: 34 },
-    ];
-    const libro = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(libro, hoja, "Control");
-    const buffer = XLSX.write(libro, { bookType: "xlsx", type: "array" });
-
-    descargar(
-      new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      }),
+    descargarExcel(
+      filas,
+      [24, 16, ...DIAS.map(() => 6), 10, 34],
+      "Control",
       `control-cashmana-${semanaISO}.xlsx`
     );
   }
 
   function exportarTxt() {
-    const texto = califican.map((c) => c.nombre).join("\n");
-    descargar(
-      new Blob([texto], { type: "text/plain;charset=utf-8" }),
+    descargarTxt(
+      califican.map((c) => c.nombre).join("\n"),
       `califican-${semanaISO}.txt`
     );
   }
@@ -275,6 +263,15 @@ export default function ControlCashmana({ email, userId }) {
         <div className="flex-1">
           <h1 className="text-xl font-semibold">Control Cashmana</h1>
         </div>
+        {esAdmin && (
+          <Link
+            href="/admin"
+            className="flex items-center gap-1.5 text-amber-700 hover:text-amber-900 text-sm transition mr-3"
+          >
+            <Ticket size={15} />
+            Panel admin
+          </Link>
+        )}
         <button
           onClick={cerrarSesion}
           className="flex items-center gap-1.5 text-stone-500 hover:text-stone-800 text-sm transition"
@@ -325,6 +322,14 @@ export default function ControlCashmana({ email, userId }) {
           placeholder="Nombre del cliente"
           className="flex-1 border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
         />
+        <input
+          type="tel"
+          value={telefono}
+          onChange={(e) => setTelefono(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && agregarCliente()}
+          placeholder="Teléfono (opcional)"
+          className="w-44 border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+        />
         <button
           onClick={agregarCliente}
           className="flex items-center gap-1 bg-stone-800 hover:bg-stone-900 text-white text-sm font-medium px-4 py-2 rounded-lg transition"
@@ -349,7 +354,12 @@ export default function ControlCashmana({ email, userId }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-stone-100 text-stone-600 text-xs uppercase tracking-wide">
-                  <th className="text-left px-4 py-3 font-medium">Cliente</th>
+                  <th className="text-left px-4 py-3 font-medium min-w-[150px]">
+                    Cliente
+                  </th>
+                  <th className="text-left px-3 py-3 font-medium min-w-[120px]">
+                    Teléfono
+                  </th>
                   {DIAS.map((d) => (
                     <th
                       key={d.key}
@@ -373,8 +383,30 @@ export default function ControlCashmana({ email, userId }) {
                     key={cliente.id}
                     className="border-t border-stone-100 hover:bg-stone-50"
                   >
-                    <td className="px-4 py-2.5 font-medium whitespace-nowrap">
-                      {cliente.nombre}
+                    <td className="px-4 py-2.5">
+                      <input
+                        type="text"
+                        value={cliente.nombre}
+                        onChange={(e) =>
+                          editarCliente(cliente.id, "nombre", e.target.value)
+                        }
+                        onBlur={() => guardarCliente(cliente, "nombre")}
+                        aria-label={`Nombre de ${cliente.nombre}`}
+                        className="w-full font-medium bg-transparent border border-transparent rounded-md px-2 py-1 hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      />
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <input
+                        type="tel"
+                        value={cliente.telefono || ""}
+                        onChange={(e) =>
+                          editarCliente(cliente.id, "telefono", e.target.value)
+                        }
+                        onBlur={() => guardarCliente(cliente, "telefono")}
+                        placeholder="—"
+                        aria-label={`Teléfono de ${cliente.nombre}`}
+                        className="w-full text-xs bg-transparent border border-transparent rounded-md px-2 py-1 hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      />
                     </td>
                     {DIAS.map((d) => (
                       <td key={d.key} className="px-2 py-2.5 text-center">

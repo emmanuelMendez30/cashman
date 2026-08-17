@@ -48,4 +48,20 @@ Un cliente "califica" cuando tiene marcados los seis días, de lunes a sábado. 
 
 ## Cambiar los días que cuentan
 
-Si la semana no va de lunes a sábado, editá el arreglo `DIAS` al inicio de `components/ControlCashmana.jsx`. Si sacás o agregás días, acordate de ajustar también las columnas de la tabla `marcas` en Supabase.
+Si la semana no va de lunes a sábado, editá el arreglo `DIAS` al inicio de `lib/semanas.js`. Si sacás o agregás días, acordate de ajustar también las columnas de la tabla `marcas` en Supabase y la condición de la función `asignar_numeros_rifa`, que chequea los seis días a mano.
+
+## El panel de administración
+
+Un usuario con `rol = 'admin'` en la tabla `perfiles` ve un enlace extra al panel, en `/admin`. Ahí puede mirar el padrón de clientes de todos los usuarios con su teléfono y bajarlo a Excel, y generar los números de la rifa de cada semana.
+
+Los números salen de la función `asignar_numeros_rifa`, que reparte al azar entre los clientes que completaron los seis días, **juntando los de todos los usuarios en una sola rifa**. Se sortean una sola vez y quedan guardados en `rifa_numeros`, así que volver a abrir el panel o bajar el Excel de nuevo devuelve siempre los mismos números.
+
+El pozo tiene dos vueltas. La primera son los cien números del 00 al 99, uno por cliente. Cuando se agota, los que sobran entran en una segunda vuelta que se sortea **entre el 50 y el 99**, y cada uno de esos números se repite una sola vez: dos clientes pueden compartir el 76, pero nunca tres. Eso pone un tope de 150 participantes por semana, y si se pasa, la función falla con un mensaje claro en vez de dejar gente sin número.
+
+Internamente la segunda vuelta se guarda como 150-199 para que la columna `numero` siga siendo única dentro de la semana; el número que se le canta al cliente es `numero % 100`. El panel marca cuáles son de segunda vuelta.
+
+Para hacer admin a alguien, en el SQL Editor:
+
+```sql
+update public.perfiles set rol = 'admin' where email = 'correo@ejemplo.com';
+```

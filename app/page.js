@@ -10,5 +10,19 @@ export default async function Home() {
 
   if (!user) redirect("/login");
 
-  return <ControlCashmana email={user.email} userId={user.id} />;
+  // Si la tabla `perfiles` todavia no existe, el error se ignora y el
+  // usuario entra como uno comun: la app sigue andando sin el panel.
+  const { data: perfil } = await supabase
+    .from("perfiles")
+    .select("rol")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  return (
+    <ControlCashmana
+      email={user.email}
+      userId={user.id}
+      esAdmin={perfil?.rol === "admin"}
+    />
+  );
 }
