@@ -1,18 +1,24 @@
 -- =====================================================
--- Control Cashmana — esquema de base de datos
+-- Migración: separar el padrón de clientes de las marcas semanales
 --
--- Dos tablas: `clientes` es el padrón permanente (das de alta a la
--- persona una sola vez) y `marcas` guarda los seis días de cada
--- semana. Así el cliente queda registrado y cada semana solo marcás
--- si compró.
+-- Antes: una fila por cliente Y por semana. Al cambiar de semana
+--        la lista arrancaba vacía y había que reescribir los nombres.
 --
--- Si ya tenías la versión vieja de una sola tabla, NO uses este
--- archivo: corré supabase/migracion-padron.sql, que conserva tus datos.
+-- Ahora: `clientes` es el padrón permanente (un cliente, una fila) y
+--        `marcas` guarda los seis días de cada semana. Das de alta al
+--        cliente una vez y todas las semanas siguientes solo marcás.
+--
+-- Es re-ejecutable y NO borra nada: la tabla vieja queda guardada como
+-- clientes_semanal_legacy por si hay que mirar hacia atrás.
 --
 -- Pegá todo esto en Supabase > SQL Editor y ejecutalo.
 -- =====================================================
 
--- El padrón: quién es tu cliente. Una fila por persona.
+-- 1) Apartar la tabla vieja (conserva sus datos y sus policies)
+alter table if exists public.clientes
+  rename to clientes_semanal_legacy;
+
+-- 2) El padrón: quién es tu cliente. Una fila por persona.
 create table if not exists public.clientes (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users(id) on delete cascade,
@@ -31,7 +37,7 @@ create unique index if not exists clientes_user_nombre_activo_key
   on public.clientes (user_id, nombre)
   where hasta is null;
 
--- Las marcas: qué compró cada cliente en cada semana.
+-- 3) Las marcas: qué compró cada cliente en cada semana.
 create table if not exists public.marcas (
   id          uuid primary key default gen_random_uuid(),
   cliente_id  uuid not null references public.clientes(id) on delete cascade,
@@ -49,9 +55,26 @@ create table if not exists public.marcas (
   constraint marcas_cliente_semana_key unique (cliente_id, semana)
 );
 
--- Búsquedas rápidas por usuario y semana
 create index if not exists marcas_user_semana_idx
   on public.marcas (user_id, semana);
+
+-- 4) Pasar los datos que ya existían
+--    Cada nombre distinto se convierte en un cliente del padrón, y su
+--    fecha de alta es la primera semana en la que aparecía.
+insert into public.clientes (user_id, nombre, desde)
+select l.user_id, l.nombre, min(l.semana)
+from public.clientes_semanal_legacy l
+group by l.user_id, l.nombre
+on conflict do nothing;
+
+--    Y cada fila vieja se convierte en las marcas de esa semana.
+insert into public.marcas
+  (cliente_id, user_id, semana, lun, mar, mie, jue, vie, sab, nota)
+select c.id, l.user_id, l.semana, l.lun, l.mar, l.mie, l.jue, l.vie, l.sab, l.nota
+from public.clientes_semanal_legacy l
+join public.clientes c
+  on c.user_id = l.user_id and c.nombre = l.nombre
+on conflict on constraint marcas_cliente_semana_key do nothing;
 
 -- =====================================================
 -- Row Level Security: cada usuario solo ve lo suyo

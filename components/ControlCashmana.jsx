@@ -64,16 +64,33 @@ export default function ControlCashmana({ email, userId }) {
 
   const cargar = useCallback(async () => {
     setCargando(true);
+
+    // El padron vive en `clientes` y las cruces de cada semana en `marcas`.
+    // Traemos los clientes vigentes en esta semana con su fila de marcas
+    // (si todavia no existe viene vacia) y los aplanamos a un solo objeto,
+    // que es la forma que consume el resto del componente.
     const { data, error } = await supabase
       .from("clientes")
-      .select("*")
+      .select("id, nombre, marcas(semana, lun, mar, mie, jue, vie, sab, nota)")
       .eq("user_id", userId)
-      .eq("semana", semanaISO)
+      .lte("desde", semanaISO)
+      .or(`hasta.is.null,hasta.gt.${semanaISO}`)
+      .eq("marcas.semana", semanaISO)
       .order("created_at", { ascending: true });
 
     if (error) setError("No se pudo cargar la lista. Recargá la página.");
     else {
-      setClientes(data || []);
+      setClientes(
+        (data || []).map((c) => {
+          const marca = c.marcas?.[0];
+          return {
+            id: c.id,
+            nombre: c.nombre,
+            nota: marca?.nota ?? "",
+            ...Object.fromEntries(DIAS.map((d) => [d.key, marca?.[d.key] ?? false])),
+          };
+        })
+      );
       setError("");
     }
     setCargando(false);
@@ -103,21 +120,30 @@ export default function ControlCashmana({ email, userId }) {
       return;
     }
 
+    // Alta en el padron: queda registrado desde esta semana en adelante.
     const { data, error } = await supabase
       .from("clientes")
-      .insert({ nombre: limpio, semana: semanaISO, user_id: user.id })
-      .select()
+      .insert({ nombre: limpio, desde: semanaISO, user_id: user.id })
+      .select("id, nombre")
       .single();
 
     if (error) {
       setError(
         error.code === "23505"
-          ? "Ese cliente ya está en esta semana."
+          ? "Ese cliente ya está en tu lista."
           : "No se pudo agregar el cliente. Probá de nuevo."
       );
       return;
     }
-    setClientes([...clientes, data]);
+    setClientes([
+      ...clientes,
+      {
+        id: data.id,
+        nombre: data.nombre,
+        nota: "",
+        ...Object.fromEntries(DIAS.map((d) => [d.key, false])),
+      },
+    ]);
     setNombre("");
     setError("");
   }
@@ -128,10 +154,17 @@ export default function ControlCashmana({ email, userId }) {
       prev.map((c) => (c.id === cliente.id ? { ...c, [diaKey]: nuevoValor } : c))
     );
 
-    const { error } = await supabase
-      .from("clientes")
-      .update({ [diaKey]: nuevoValor })
-      .eq("id", cliente.id);
+    // La fila de marcas de esta semana puede no existir todavia: el upsert
+    // la crea con el resto de los dias en false, o actualiza solo este dia.
+    const { error } = await supabase.from("marcas").upsert(
+      {
+        cliente_id: cliente.id,
+        user_id: userId,
+        semana: semanaISO,
+        [diaKey]: nuevoValor,
+      },
+      { onConflict: "cliente_id,semana" }
+    );
 
     if (error) {
       setError("No se pudo guardar el cambio. Probá de nuevo.");
@@ -146,10 +179,15 @@ export default function ControlCashmana({ email, userId }) {
   }
 
   async function guardarNota(cliente) {
-    const { error } = await supabase
-      .from("clientes")
-      .update({ nota: cliente.nota })
-      .eq("id", cliente.id);
+    const { error } = await supabase.from("marcas").upsert(
+      {
+        cliente_id: cliente.id,
+        user_id: userId,
+        semana: semanaISO,
+        nota: cliente.nota,
+      },
+      { onConflict: "cliente_id,semana" }
+    );
 
     if (error) setError("No se pudo guardar la nota. Probá de nuevo.");
   }
@@ -158,7 +196,14 @@ export default function ControlCashmana({ email, userId }) {
     const previos = clientes;
     setClientes(clientes.filter((c) => c.id !== id));
 
-    const { error } = await supabase.from("clientes").delete().eq("id", id);
+    // Archivar en vez de borrar: el cliente desaparece de esta semana y de
+    // las siguientes, pero las semanas ya cerradas lo siguen mostrando con
+    // lo que habia comprado.
+    const { error } = await supabase
+      .from("clientes")
+      .update({ hasta: semanaISO })
+      .eq("id", id);
+
     if (error) {
       setError("No se pudo eliminar el cliente. Probá de nuevo.");
       setClientes(previos);
@@ -295,7 +340,8 @@ export default function ControlCashmana({ email, userId }) {
         </div>
       ) : clientes.length === 0 ? (
         <div className="text-center text-stone-400 text-sm py-16 border border-dashed border-stone-300 rounded-xl">
-          Todavía no cargaste clientes en esta semana.
+          Todavía no cargaste clientes. Los que agregues quedan registrados
+          para todas las semanas siguientes.
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">

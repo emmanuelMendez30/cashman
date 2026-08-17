@@ -38,10 +38,14 @@ Vercel detecta Next.js solo, no hay que configurar nada más. También podés ha
 
 ## Cómo funciona
 
-Cada fila de la tabla `clientes` guarda un cliente para una semana puntual (la columna `semana` guarda el lunes de esa semana). Al cambiar de semana con las flechas, la lista arranca vacía y la semana anterior queda guardada como histórico.
+Hay dos tablas. `clientes` es el padrón: una fila por persona, que das de alta una sola vez. `marcas` guarda los seis días de cada semana, con una fila por cliente y por semana (la columna `semana` guarda el lunes).
+
+Eso significa que **el cliente queda registrado**: al cambiar de semana con las flechas la lista sigue mostrando a las mismas personas, con los días en blanco, y vos solo marcás quién compró. La fila de marcas se crea sola la primera vez que tocás un día o escribís una nota.
+
+Dos columnas del padrón controlan desde cuándo y hasta cuándo aparece cada cliente. `desde` se completa al darlo de alta, así que no aparece en semanas anteriores a su alta. `hasta` se completa al eliminarlo: en vez de borrarse, el cliente se archiva, desaparece de esa semana en adelante y las semanas ya cerradas lo siguen mostrando con lo que había comprado. Por eso el histórico y las exportaciones viejas nunca cambian.
 
 Un cliente "califica" cuando tiene marcados los seis días, de lunes a sábado. La exportación a Excel baja la semana completa con todas las columnas; la exportación a txt baja solo los nombres que califican, uno por línea.
 
 ## Cambiar los días que cuentan
 
-Si la semana no va de lunes a sábado, editá el arreglo `DIAS` al inicio de `components/ControlCashmana.jsx`. Si sacás o agregás días, acordate de ajustar también las columnas de la tabla en Supabase.
+Si la semana no va de lunes a sábado, editá el arreglo `DIAS` al inicio de `components/ControlCashmana.jsx`. Si sacás o agregás días, acordate de ajustar también las columnas de la tabla `marcas` en Supabase.
