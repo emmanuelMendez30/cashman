@@ -11,9 +11,10 @@ import {
   ChevronRight,
   ArrowLeft,
   Dices,
+  Search,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { lunesDe, aISO, rangoLegible } from "@/lib/semanas";
+import { lunesDe, aISO, rangoLegible, normalizar } from "@/lib/semanas";
 import { descargarExcel } from "@/lib/descargas";
 
 export default function PanelAdmin({ email }) {
@@ -24,6 +25,7 @@ export default function PanelAdmin({ email }) {
   const [semana, setSemana] = useState(() => lunesDe(new Date()));
   const [rifa, setRifa] = useState([]);
   const [orden, setOrden] = useState("nombre");
+  const [busqueda, setBusqueda] = useState("");
   const [cargando, setCargando] = useState(true);
   const [sorteando, setSorteando] = useState(false);
   const [error, setError] = useState("");
@@ -78,11 +80,9 @@ export default function PanelAdmin({ email }) {
       padron.map((c) => ({
         Cliente: c.nombre,
         Teléfono: c.telefono || "",
-        Encargado: c.duenio,
-        "Alta": c.desde,
-        "Estado": c.hasta ? `Archivado el ${c.hasta}` : "Activo",
+        Estado: c.hasta ? `Archivado el ${c.hasta}` : "Activo",
       })),
-      [26, 16, 26, 12, 22],
+      [26, 16, 22],
       "Padrón",
       `padron-completo-${aISO(new Date())}.xlsx`
     );
@@ -106,17 +106,25 @@ export default function PanelAdmin({ email }) {
     [...rifa].sort(porAlta).map((c, i) => [c.nombre, i + 1])
   );
 
+  // El buscador filtra lo que se ve en pantalla, no lo que se exporta: el
+  // Excel de la rifa y el del padron son documentos que se reparten, y bajar
+  // media lista por tener texto olvidado en el buscador seria un problema.
+  const filtro = normalizar(busqueda.trim());
+  const coincide = (c) => !filtro || normalizar(c.nombre).includes(filtro);
+
+  const padronVisible = padron.filter(coincide);
+  const rifaVisible = rifaOrdenada.filter(coincide);
+
   function exportarRifa() {
     descargarExcel(
+      // Solo lo que se le canta al cliente. El orden de alta, el encargado y
+      // el numero interno siguen visibles en pantalla para auditar el sorteo,
+      // pero no tienen por que viajar en el archivo que se reparte.
       rifaOrdenada.map((c) => ({
         Número: c.numero_rifa,
         Cliente: c.nombre,
-        "Orden de alta": posicionAlta.get(c.nombre),
-        Teléfono: c.telefono || "",
-        Encargado: c.duenio,
-        "N° interno": c.numero,
       })),
-      [10, 26, 14, 16, 26, 12],
+      [10, 30],
       "Rifa",
       `rifa-${semanaISO}.xlsx`
     );
@@ -180,6 +188,20 @@ export default function PanelAdmin({ email }) {
         </button>
       </div>
 
+      <div className="relative mb-5">
+        <Search
+          size={15}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"
+        />
+        <input
+          type="search"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          placeholder="Buscar cliente por nombre"
+          className="w-full border border-stone-300 rounded-lg pl-9 pr-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+        />
+      </div>
+
       {error && (
         <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           <AlertCircle size={16} />
@@ -220,7 +242,7 @@ export default function PanelAdmin({ email }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {padron.map((c, i) => (
+                      {padronVisible.map((c, i) => (
                         <tr
                           key={`${c.duenio}-${c.nombre}-${i}`}
                           className="border-t border-stone-100 hover:bg-stone-50"
@@ -258,6 +280,8 @@ export default function PanelAdmin({ email }) {
               <div className="mt-4 text-sm text-stone-500">
                 {padron.filter((c) => !c.hasta).length} activos de{" "}
                 {padron.length} en total
+                {filtro &&
+                  ` · mostrando ${padronVisible.length}, el Excel baja todos`}
               </div>
             </>
           )}
@@ -355,7 +379,7 @@ export default function PanelAdmin({ email }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {rifaOrdenada.map((c) => (
+                      {rifaVisible.map((c) => (
                         <tr
                           key={c.numero}
                           className="border-t border-stone-100 hover:bg-stone-50"
@@ -391,6 +415,8 @@ export default function PanelAdmin({ email }) {
 
               <div className="mt-4 text-sm text-stone-500">
                 {rifa.length} participantes con número asignado
+                {filtro &&
+                  ` · mostrando ${rifaVisible.length}, el Excel baja todos`}
               </div>
             </>
           )}

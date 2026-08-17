@@ -29,10 +29,9 @@ import {
   TELEFONO_LARGO,
   semanaEditable,
   cierreLegible,
+  normalizar,
 } from "@/lib/semanas";
 import { descargarExcel, descargarTxt } from "@/lib/descargas";
-
-const ACENTOS = /[̀-ͯ]/g;
 
 export default function ControlCashmana({ email, userId, esAdmin = false }) {
   const supabase = createClient();
@@ -284,15 +283,6 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
   // pantalla no ofrezca lo que la base va a rechazar.
   const semanaAbierta = semanaEditable(semana);
   const puedeEditar = (c) => c.esMio && semanaAbierta;
-
-  // Sin acentos y sin distinguir mayusculas, para que "jose" encuentre a José.
-  // NFD separa la letra de su tilde y el rango U+0300-U+036F son justamente
-  // esas tildes sueltas, asi que borrarlas deja la letra pelada.
-  const normalizar = (t) =>
-    (t || "")
-      .normalize("NFD")
-      .replace(ACENTOS, "")
-      .toLowerCase();
 
   const filtro = normalizar(busqueda.trim());
   const visibles = filtro
