@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  Search,
+  Lock,
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -25,8 +27,12 @@ import {
   soloDigitos,
   telefonoValido,
   TELEFONO_LARGO,
+  semanaEditable,
+  cierreLegible,
 } from "@/lib/semanas";
 import { descargarExcel, descargarTxt } from "@/lib/descargas";
+
+const ACENTOS = /[̀-ͯ]/g;
 
 export default function ControlCashmana({ email, userId, esAdmin = false }) {
   const supabase = createClient();
@@ -36,6 +42,7 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
   const [clientes, setClientes] = useState([]);
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [busqueda, setBusqueda] = useState("");
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
 
@@ -272,6 +279,30 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
 
   const califican = clientes.filter(califica);
 
+  // Desde el domingo a las 00:00 de Costa Rica la semana queda cerrada.
+  // La misma regla vive en las policies de Postgres; esto es para que la
+  // pantalla no ofrezca lo que la base va a rechazar.
+  const semanaAbierta = semanaEditable(semana);
+  const puedeEditar = (c) => c.esMio && semanaAbierta;
+
+  // Sin acentos y sin distinguir mayusculas, para que "jose" encuentre a José.
+  // NFD separa la letra de su tilde y el rango U+0300-U+036F son justamente
+  // esas tildes sueltas, asi que borrarlas deja la letra pelada.
+  const normalizar = (t) =>
+    (t || "")
+      .normalize("NFD")
+      .replace(ACENTOS, "")
+      .toLowerCase();
+
+  const filtro = normalizar(busqueda.trim());
+  const visibles = filtro
+    ? clientes.filter(
+        (c) =>
+          normalizar(c.nombre).includes(filtro) ||
+          (c.telefono || "").includes(filtro)
+      )
+    : clientes;
+
   function exportarExcel() {
     const filas = clientes.map((c) => {
       const fila = { Cliente: c.nombre, Teléfono: c.telefono || "" };
@@ -356,7 +387,22 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
         </div>
       )}
 
-      <div className="flex gap-2 mb-6">
+      {!semanaAbierta && (
+        <div className="mb-4 flex items-start gap-2 text-sm text-stone-600 bg-stone-100 border border-stone-300 rounded-lg px-3 py-2">
+          <Lock size={16} className="mt-0.5 flex-shrink-0" />
+          <span>
+            Esta semana ya cerró y quedó como histórico. Se podía editar hasta
+            la medianoche del sábado {cierreLegible(semana)}.{" "}
+            {esAdmin
+              ? "Como admin la ves completa, pero nadie puede modificarla."
+              : "Para cargar movimientos, pasá a la semana siguiente con la flecha."}
+          </span>
+        </div>
+      )}
+
+      <div
+        className={`flex gap-2 mb-4 ${semanaAbierta ? "" : "hidden"}`}
+      >
         <input
           type="text"
           value={nombre}
@@ -383,6 +429,38 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search
+            size={15}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"
+          />
+          <input
+            type="search"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar cliente por nombre o teléfono"
+            className="w-full border border-stone-300 rounded-lg pl-9 pr-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+        </div>
+        <button
+          onClick={exportarExcel}
+          disabled={clientes.length === 0}
+          className="flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition disabled:opacity-40 disabled:hover:bg-white"
+        >
+          <FileSpreadsheet size={15} />
+          Excel de la semana
+        </button>
+        <button
+          onClick={exportarTxt}
+          disabled={califican.length === 0}
+          className="flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition disabled:opacity-40 disabled:hover:bg-white"
+        >
+          <FileText size={15} />
+          Txt de los que califican
+        </button>
+      </div>
+
       {cargando ? (
         <div className="text-center text-stone-400 text-sm py-16">
           Cargando lista...
@@ -392,6 +470,10 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
           {esAdmin
             ? "Ningún usuario tiene clientes en esta semana."
             : "Todavía no cargaste clientes. Los que agregues quedan registrados para todas las semanas siguientes."}
+        </div>
+      ) : visibles.length === 0 ? (
+        <div className="text-center text-stone-400 text-sm py-16 border border-dashed border-stone-300 rounded-xl">
+          Ningún cliente coincide con “{busqueda}”.
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
@@ -428,7 +510,7 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                 </tr>
               </thead>
               <tbody>
-                {clientes.map((cliente) => (
+                {visibles.map((cliente) => (
                   <tr
                     key={cliente.id}
                     className="border-t border-stone-100 hover:bg-stone-50"
@@ -441,10 +523,10 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                           editarCliente(cliente.id, "nombre", e.target.value)
                         }
                         onBlur={() => guardarCliente(cliente, "nombre")}
-                        readOnly={!cliente.esMio}
+                        readOnly={!puedeEditar(cliente)}
                         aria-label={`Nombre de ${cliente.nombre}`}
                         className={`w-full font-medium bg-transparent border border-transparent rounded-md px-2 py-1 focus:outline-none ${
-                          cliente.esMio
+                          puedeEditar(cliente)
                             ? "hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:ring-1 focus:ring-amber-400"
                             : "cursor-default text-stone-600"
                         }`}
@@ -463,13 +545,13 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                           )
                         }
                         onBlur={() => guardarCliente(cliente, "telefono")}
-                        readOnly={!cliente.esMio}
+                        readOnly={!puedeEditar(cliente)}
                         placeholder="—"
                         aria-label={`Teléfono de ${cliente.nombre}`}
                         className={`w-full text-xs bg-transparent border rounded-md px-2 py-1 focus:outline-none ${
                           !telefonoValido(cliente.telefono)
                             ? "border-red-300 bg-red-50"
-                            : cliente.esMio
+                            : puedeEditar(cliente)
                               ? "border-transparent hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:ring-1 focus:ring-amber-400"
                               : "border-transparent cursor-default text-stone-500"
                         }`}
@@ -484,20 +566,27 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                       <td key={d.key} className="px-2 py-2.5 text-center">
                         <button
                           onClick={() => toggleDia(cliente, d.key)}
-                          disabled={!cliente.esMio}
+                          disabled={!puedeEditar(cliente)}
                           className={`w-6 h-6 rounded-md border flex items-center justify-center mx-auto transition ${
                             cliente[d.key]
-                              ? cliente.esMio
+                              ? puedeEditar(cliente)
                                 ? "bg-emerald-500 border-emerald-500"
                                 : "bg-emerald-200 border-emerald-200"
-                              : cliente.esMio
+                              : puedeEditar(cliente)
                                 ? "border-stone-300 hover:border-stone-400"
                                 : "border-stone-200"
-                          } ${cliente.esMio ? "" : "cursor-default"}`}
+                          } ${puedeEditar(cliente) ? "" : "cursor-default"}`}
                           aria-label={`${d.label} - ${cliente.nombre}`}
                         >
                           {cliente[d.key] && (
-                            <Check size={14} className="text-white" />
+                            <Check
+                              size={14}
+                              className={
+                                puedeEditar(cliente)
+                                  ? "text-white"
+                                  : "text-emerald-700"
+                              }
+                            />
                           )}
                         </button>
                       </td>
@@ -517,17 +606,17 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                         value={cliente.nota || ""}
                         onChange={(e) => editarNota(cliente.id, e.target.value)}
                         onBlur={() => guardarNota(cliente)}
-                        readOnly={!cliente.esMio}
-                        placeholder={cliente.esMio ? "Ej: martes no completó cuota" : ""}
+                        readOnly={!puedeEditar(cliente)}
+                        placeholder={puedeEditar(cliente) ? "Ej: martes no completó cuota" : ""}
                         className={`w-full text-xs border rounded-md px-2 py-1.5 focus:outline-none ${
-                          cliente.esMio
+                          puedeEditar(cliente)
                             ? "border-stone-200 focus:ring-1 focus:ring-amber-400"
                             : "border-transparent cursor-default text-stone-500"
                         }`}
                       />
                     </td>
                     <td className="px-2 py-2.5 text-center">
-                      {cliente.esMio && (
+                      {puedeEditar(cliente) && (
                         <button
                           onClick={() => eliminarCliente(cliente.id)}
                           className="text-stone-300 hover:text-red-500 transition"
@@ -546,27 +635,9 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
       )}
 
       {clientes.length > 0 && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <span className="text-sm text-stone-500">
-            {califican.length} de {clientes.length} clientes califican
-          </span>
-          <div className="flex gap-2 ml-auto">
-            <button
-              onClick={exportarExcel}
-              className="flex items-center gap-1.5 border border-stone-300 bg-white hover:bg-stone-100 text-sm px-3 py-2 rounded-lg transition"
-            >
-              <FileSpreadsheet size={15} />
-              Exportar a Excel
-            </button>
-            <button
-              onClick={exportarTxt}
-              disabled={califican.length === 0}
-              className="flex items-center gap-1.5 border border-stone-300 bg-white hover:bg-stone-100 disabled:opacity-40 disabled:hover:bg-white text-sm px-3 py-2 rounded-lg transition"
-            >
-              <FileText size={15} />
-              Descargar lista .txt
-            </button>
-          </div>
+        <div className="mt-4 text-sm text-stone-500">
+          {califican.length} de {clientes.length} clientes califican
+          {filtro && ` · mostrando ${visibles.length}`}
         </div>
       )}
     </div>

@@ -169,6 +169,15 @@ export default function PanelAdmin({ email }) {
           <Dices size={15} />
           Rifa de la semana
         </button>
+
+        <button
+          onClick={vista === "padron" ? exportarPadron : exportarRifa}
+          disabled={vista === "padron" ? padron.length === 0 : rifa.length === 0}
+          className="ml-auto flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition disabled:opacity-40 disabled:hover:bg-white"
+        >
+          <FileSpreadsheet size={15} />
+          {vista === "padron" ? "Excel de todos los clientes" : "Excel de la rifa"}
+        </button>
       </div>
 
       {error && (
@@ -246,18 +255,9 @@ export default function PanelAdmin({ email }) {
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <span className="text-sm text-stone-500">
-                  {padron.filter((c) => !c.hasta).length} activos de{" "}
-                  {padron.length} en total
-                </span>
-                <button
-                  onClick={exportarPadron}
-                  className="ml-auto flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition"
-                >
-                  <FileSpreadsheet size={15} />
-                  Excel de todos los clientes
-                </button>
+              <div className="mt-4 text-sm text-stone-500">
+                {padron.filter((c) => !c.hasta).length} activos de{" "}
+                {padron.length} en total
               </div>
             </>
           )}
@@ -389,17 +389,8 @@ export default function PanelAdmin({ email }) {
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <span className="text-sm text-stone-500">
-                  {rifa.length} participantes con número asignado
-                </span>
-                <button
-                  onClick={exportarRifa}
-                  className="ml-auto flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition"
-                >
-                  <FileSpreadsheet size={15} />
-                  Excel de la rifa
-                </button>
+              <div className="mt-4 text-sm text-stone-500">
+                {rifa.length} participantes con número asignado
               </div>
             </>
           )}
