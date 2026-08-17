@@ -16,7 +16,16 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { DIAS, lunesDe, aISO, rangoLegible, califica } from "@/lib/semanas";
+import {
+  DIAS,
+  lunesDe,
+  aISO,
+  rangoLegible,
+  califica,
+  soloDigitos,
+  telefonoValido,
+  TELEFONO_LARGO,
+} from "@/lib/semanas";
 import { descargarExcel, descargarTxt } from "@/lib/descargas";
 
 export default function ControlCashmana({ email, userId, esAdmin = false }) {
@@ -81,6 +90,11 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
     const limpio = nombre.trim();
     if (!limpio) return;
 
+    if (!telefonoValido(telefono)) {
+      setError(`El teléfono tiene que ser de ${TELEFONO_LARGO} dígitos.`);
+      return;
+    }
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -140,6 +154,13 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
     if (campo === "nombre" && !valor) {
       setError("El nombre no puede quedar vacío.");
       cargar();
+      return;
+    }
+
+    // No se guarda un telefono a medias: se avisa y el campo queda editable
+    // con lo que la persona escribio, para que lo complete.
+    if (campo === "telefono" && !telefonoValido(valor)) {
+      setError(`El teléfono tiene que ser de ${TELEFONO_LARGO} dígitos.`);
       return;
     }
 
@@ -324,11 +345,12 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
         />
         <input
           type="tel"
+          inputMode="numeric"
           value={telefono}
-          onChange={(e) => setTelefono(e.target.value)}
+          onChange={(e) => setTelefono(soloDigitos(e.target.value))}
           onKeyDown={(e) => e.key === "Enter" && agregarCliente()}
-          placeholder="Teléfono (opcional)"
-          className="w-44 border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+          placeholder={`Teléfono (${TELEFONO_LARGO} dígitos, opcional)`}
+          className="w-52 border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
         />
         <button
           onClick={agregarCliente}
@@ -398,14 +420,23 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
                     <td className="px-3 py-2.5">
                       <input
                         type="tel"
+                        inputMode="numeric"
                         value={cliente.telefono || ""}
                         onChange={(e) =>
-                          editarCliente(cliente.id, "telefono", e.target.value)
+                          editarCliente(
+                            cliente.id,
+                            "telefono",
+                            soloDigitos(e.target.value)
+                          )
                         }
                         onBlur={() => guardarCliente(cliente, "telefono")}
                         placeholder="—"
                         aria-label={`Teléfono de ${cliente.nombre}`}
-                        className="w-full text-xs bg-transparent border border-transparent rounded-md px-2 py-1 hover:border-stone-200 focus:bg-white focus:border-stone-300 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        className={`w-full text-xs bg-transparent border rounded-md px-2 py-1 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                          telefonoValido(cliente.telefono)
+                            ? "border-transparent hover:border-stone-200 focus:border-stone-300"
+                            : "border-red-300 bg-red-50"
+                        }`}
                       />
                     </td>
                     {DIAS.map((d) => (
