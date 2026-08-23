@@ -12,10 +12,18 @@ import {
   ArrowLeft,
   Dices,
   Search,
+  ImageDown,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { lunesDe, aISO, rangoLegible, normalizar } from "@/lib/semanas";
+import {
+  lunesDe,
+  aISO,
+  rangoLegible,
+  cierreLegible,
+  normalizar,
+} from "@/lib/semanas";
 import { descargarExcel } from "@/lib/descargas";
+import { descargarAficheRifa } from "@/lib/afiche";
 
 export default function PanelAdmin({ email }) {
   const supabase = createClient();
@@ -115,18 +123,44 @@ export default function PanelAdmin({ email }) {
   const padronVisible = padron.filter(coincide);
   const rifaVisible = rifaOrdenada.filter(coincide);
 
+  // El Excel de la rifa sale siempre por numero, sin importar como este
+  // ordenada la pantalla: es el papel con el que se busca al ganador.
+  // Se ordena por el numero que se canta y no por el interno, para que la
+  // columna quede de verdad de menor a mayor (el interno salta a 150 en la
+  // segunda vuelta). Los dos que comparten numero caen juntos, y adelante
+  // va el de la primera vuelta.
+  const rifaPorNumero = [...rifa].sort(
+    (a, b) =>
+      Number(a.numero_rifa) - Number(b.numero_rifa) || a.numero - b.numero
+  );
+
   function exportarRifa() {
     descargarExcel(
       // Solo lo que se le canta al cliente. El orden de alta, el encargado y
       // el numero interno siguen visibles en pantalla para auditar el sorteo,
       // pero no tienen por que viajar en el archivo que se reparte.
-      rifaOrdenada.map((c) => ({
+      rifaPorNumero.map((c) => ({
         Número: c.numero_rifa,
         Cliente: c.nombre,
       })),
       [10, 30],
       "Rifa",
       `rifa-${semanaISO}.xlsx`
+    );
+  }
+
+  // La imagen no reemplaza al Excel: es la misma lista y el mismo orden, pero
+  // en algo que se manda por chat y se lee en el teléfono sin abrir nada.
+  // La hora del sorteo es la de siempre, la que está documentada arriba de
+  // `cierreDeSemana` en lib/semanas.js.
+  function exportarImagenRifa() {
+    descargarAficheRifa(
+      rifaPorNumero.map((c) => ({ numero: c.numero_rifa, nombre: c.nombre })),
+      {
+        rango: rangoLegible(semana),
+        sorteo: `Sorteo el sábado ${cierreLegible(semana)}, 7:30 p.m.`,
+      },
+      `rifa-${semanaISO}.png`
     );
   }
 
@@ -154,7 +188,7 @@ export default function PanelAdmin({ email }) {
 
       <p className="text-sm text-stone-500 mb-5 ml-12">{email}</p>
 
-      <div className="flex gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-6">
         <button
           onClick={() => setVista("padron")}
           className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
@@ -186,6 +220,17 @@ export default function PanelAdmin({ email }) {
           <FileSpreadsheet size={15} />
           {vista === "padron" ? "Excel de todos los clientes" : "Excel de la rifa"}
         </button>
+
+        {vista === "rifa" && (
+          <button
+            onClick={exportarImagenRifa}
+            disabled={rifa.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition disabled:opacity-40 disabled:hover:bg-white"
+          >
+            <ImageDown size={15} />
+            Imagen para clientes
+          </button>
+        )}
       </div>
 
       <div className="relative mb-5">
