@@ -60,6 +60,22 @@ El pozo tiene dos vueltas. La primera son los cien números del 00 al 99, uno po
 
 Internamente la segunda vuelta se guarda como 150-199 para que la columna `numero` siga siendo única dentro de la semana; el número que se le canta al cliente es `numero % 100`. El panel marca cuáles son de segunda vuelta.
 
+### Meter a alguien a mano
+
+Necesita `supabase/migracion-rifa-manual.sql` corrido en el SQL Editor.
+
+A veces una persona compró los seis días y queda afuera de la lista: el encargado se olvidó de marcar un día, o la persona nunca se dio de alta. El botón **Agregar a la rifa**, en la pestaña de la rifa, lo resuelve sin tener que pedirle nada al encargado.
+
+Se escribe el nombre y el buscador muestra a los clientes del padrón de esa semana, de todos los encargados. Se elige el que corresponde y listo: le toca un número del mismo pozo, con las mismas dos vueltas. Si la persona no aparece porque nadie la había cargado, ahí mismo se la crea con nombre y teléfono, queda en el padrón a nombre del admin desde esa semana, y entra a la rifa en el mismo paso.
+
+**Los días de la semana no se tocan.** El agregado a mano no marca lun-sáb ni pisa lo que cargó el encargado: entra directo a `rifa_numeros`, así que la planilla del encargado sigue diciendo lo que él vio. Por eso tampoco depende de las marcas para aparecer en la lista.
+
+Queda firmado con el correo del admin en la columna `agregado_por`, la tabla lo muestra con la etiqueta **A mano** y el pie cuenta cuántos hay. Eso es a propósito: el resto de la lista se puede auditar contra el orden de alta, y estos no salieron del azar, así que tienen que verse distintos.
+
+El tacho al final de la fila lo saca de la rifa y devuelve su número al pozo. Solo aparece en los agregados a mano: un número que salió del sorteo no se quita, porque sacarlo sería elegir a dedo quién no participa. Si el cliente además se creó por error, se archiva desde la pantalla principal como cualquier otro.
+
+Todo esto vale hasta la medianoche del sábado, igual que para los encargados. Desde el domingo la semana es histórico y ni el admin la modifica: la rifa ya se jugó y las listas ya se repartieron.
+
 Para hacer admin a alguien, en el SQL Editor:
 
 ```sql

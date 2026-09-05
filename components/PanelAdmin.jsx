@@ -13,6 +13,9 @@ import {
   Dices,
   Search,
   ImageDown,
+  UserPlus,
+  Trash2,
+  Lock,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -21,9 +24,11 @@ import {
   rangoLegible,
   cierreLegible,
   normalizar,
+  semanaEditable,
 } from "@/lib/semanas";
 import { descargarExcel } from "@/lib/descargas";
 import { descargarAficheRifa } from "@/lib/afiche";
+import AgregarARifa from "@/components/AgregarARifa";
 
 export default function PanelAdmin({ email }) {
   const supabase = createClient();
@@ -36,9 +41,16 @@ export default function PanelAdmin({ email }) {
   const [busqueda, setBusqueda] = useState("");
   const [cargando, setCargando] = useState(true);
   const [sorteando, setSorteando] = useState(false);
+  const [agregando, setAgregando] = useState(false);
   const [error, setError] = useState("");
 
   const semanaISO = aISO(semana);
+
+  // Desde el domingo a las 00:00 de Costa Rica la semana es histórico y la
+  // rifa ya se jugó. La misma regla la vuelven a chequear las funciones de
+  // Postgres; esto es para que la pantalla no ofrezca lo que la base va a
+  // rechazar.
+  const semanaAbierta = semanaEditable(semana);
 
   const cargarPadron = useCallback(async () => {
     setCargando(true);
@@ -77,10 +89,45 @@ export default function PanelAdmin({ email }) {
     if (vista === "rifa") cargarRifa();
   }, [vista, cargarRifa]);
 
+  // El formulario de agregar es de una semana y de una vista: si se cambia
+  // cualquiera de las dos, lo que quedó escrito ya no corresponde.
+  useEffect(() => {
+    setAgregando(false);
+  }, [semanaISO, vista]);
+
   function moverSemana(offset) {
     const nueva = new Date(semana);
     nueva.setDate(nueva.getDate() + offset * 7);
     setSemana(nueva);
+  }
+
+  function agregadoARifa(fila) {
+    setRifa((prev) => [...prev, fila]);
+    setError("");
+  }
+
+  // Solo alcanza a los agregados a mano; la función de Postgres rechaza
+  // cualquier otro. Sirve para deshacer un nombre mal escrito o una persona
+  // confundida, no para sacar a alguien que salió sorteado.
+  async function quitarDeRifa(cliente) {
+    const aviso =
+      `Quitar a ${cliente.nombre} de la rifa. Pierde el número ` +
+      `${cliente.numero_rifa}, y si lo volvés a agregar le va a tocar otro.`;
+
+    if (!window.confirm(aviso)) return;
+
+    const previos = rifa;
+    setRifa(rifa.filter((c) => c.cliente_id !== cliente.cliente_id));
+
+    const { error } = await supabase.rpc("admin_quitar_de_rifa", {
+      p_semana: semanaISO,
+      p_cliente_id: cliente.cliente_id,
+    });
+
+    if (error) {
+      setError(error.message || "No se pudo quitar de la rifa. Probá de nuevo.");
+      setRifa(previos);
+    }
   }
 
   function exportarPadron() {
@@ -111,8 +158,12 @@ export default function PanelAdmin({ email }) {
 
   // Posicion de cada cliente en el orden de alta, para mostrarla como #.
   const posicionAlta = new Map(
-    [...rifa].sort(porAlta).map((c, i) => [c.nombre, i + 1])
+    [...rifa].sort(porAlta).map((c, i) => [c.cliente_id, i + 1])
   );
+
+  // Para que el buscador del formulario no ofrezca a alguien que ya tiene
+  // número: la funcion lo rechazaria igual, pero es mejor no ofrecerlo.
+  const yaEnRifa = new Set(rifa.map((c) => c.cliente_id));
 
   // El buscador filtra lo que se ve en pantalla, no lo que se exporta: el
   // Excel de la rifa y el del padron son documentos que se reparten, y bajar
@@ -168,6 +219,8 @@ export default function PanelAdmin({ email }) {
   // (100, 101...) pero el que se canta es el modulo, asi que se repite.
   const repetidos = rifa.filter((c) => c.numero >= 100).length;
 
+  const aMano = rifa.filter((c) => c.agregado_por).length;
+
   return (
     <div className="max-w-5xl mx-auto p-4 sm:p-6">
       <div className="flex items-start gap-3 mb-1">
@@ -211,6 +264,20 @@ export default function PanelAdmin({ email }) {
           <Dices size={15} />
           Rifa de la semana
         </button>
+
+        {vista === "rifa" && semanaAbierta && (
+          <button
+            onClick={() => setAgregando((abierto) => !abierto)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
+              agregando
+                ? "bg-amber-600 text-white border-amber-600"
+                : "bg-white border-amber-300 text-amber-800 hover:bg-amber-50"
+            }`}
+          >
+            <UserPlus size={15} />
+            Agregar a la rifa
+          </button>
+        )}
 
         <button
           onClick={vista === "padron" ? exportarPadron : exportarRifa}
@@ -353,6 +420,27 @@ export default function PanelAdmin({ email }) {
             </button>
           </div>
 
+          {!semanaAbierta && (
+            <div className="mb-4 flex items-start gap-2 text-sm text-stone-600 bg-stone-100 border border-stone-300 rounded-lg px-3 py-2">
+              <Lock size={16} className="mt-0.5 flex-shrink-0" />
+              <span>
+                Esta semana ya cerró y la rifa quedó como histórico. Se podía
+                agregar gente hasta la medianoche del sábado{" "}
+                {cierreLegible(semana)}.
+              </span>
+            </div>
+          )}
+
+          {agregando && (
+            <AgregarARifa
+              supabase={supabase}
+              semanaISO={semanaISO}
+              yaEnRifa={yaEnRifa}
+              onAgregado={agregadoARifa}
+              onCerrar={() => setAgregando(false)}
+            />
+          )}
+
           {sorteando ? (
             <div className="text-center text-stone-400 text-sm py-16">
               Sorteando…
@@ -360,6 +448,7 @@ export default function PanelAdmin({ email }) {
           ) : rifa.length === 0 ? (
             <div className="text-center text-stone-400 text-sm py-16 border border-dashed border-stone-300 rounded-xl">
               Ningún cliente completó los seis días en esta semana.
+              {semanaAbierta && " Podés meter a alguien a mano con el botón de arriba."}
             </div>
           ) : (
             <>
@@ -421,12 +510,13 @@ export default function PanelAdmin({ email }) {
                         <th className="text-left px-4 py-3 font-medium">
                           Encargado
                         </th>
+                        <th className="w-10" />
                       </tr>
                     </thead>
                     <tbody>
                       {rifaVisible.map((c) => (
                         <tr
-                          key={c.numero}
+                          key={c.cliente_id}
                           className="border-t border-stone-100 hover:bg-stone-50"
                         >
                           <td className="px-4 py-2.5">
@@ -439,9 +529,19 @@ export default function PanelAdmin({ email }) {
                               </span>
                             )}
                           </td>
-                          <td className="px-4 py-2.5 font-medium">{c.nombre}</td>
+                          <td className="px-4 py-2.5 font-medium">
+                            {c.nombre}
+                            {c.agregado_por && (
+                              <span
+                                title={`Agregado a mano por ${c.agregado_por}`}
+                                className="ml-2 align-middle bg-amber-100 text-amber-800 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
+                              >
+                                A mano
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 text-stone-400 text-xs font-mono">
-                            #{posicionAlta.get(c.nombre)}
+                            #{posicionAlta.get(c.cliente_id)}
                           </td>
                           <td className="px-4 py-2.5 text-stone-600">
                             {c.telefono || (
@@ -450,6 +550,17 @@ export default function PanelAdmin({ email }) {
                           </td>
                           <td className="px-4 py-2.5 text-stone-500 text-xs">
                             {c.duenio}
+                          </td>
+                          <td className="px-2 py-2.5 text-center">
+                            {c.agregado_por && semanaAbierta && (
+                              <button
+                                onClick={() => quitarDeRifa(c)}
+                                className="text-stone-300 hover:text-red-500 transition"
+                                aria-label={`Quitar a ${c.nombre} de la rifa`}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -460,6 +571,8 @@ export default function PanelAdmin({ email }) {
 
               <div className="mt-4 text-sm text-stone-500">
                 {rifa.length} participantes con número asignado
+                {aMano > 0 &&
+                  ` · ${aMano} ${aMano === 1 ? "agregado" : "agregados"} a mano`}
                 {filtro &&
                   ` · mostrando ${rifaVisible.length}, el Excel baja todos`}
               </div>
