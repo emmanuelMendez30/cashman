@@ -1,6 +1,11 @@
 # Control Cashmana
 
-Control de compras diarias para la rifa semanal. Cada usuario ve solo sus propios clientes.
+Control de compras para las rifas del negocio, en dos módulos que comparten el mismo padrón de clientes:
+
+- **Cashmana**, la rifa de todas las semanas: califica quien compró los seis días, de lunes a sábado.
+- **Rifa Flash**, la que se arma cuando conviene, un feriado o un día especial: el admin la crea con las opciones que quiera y califica quien las tiene todas marcadas.
+
+Se pasa de uno a otro con las pestañas de arriba. Cada encargado ve y marca solo a sus propios clientes; el admin ve a todos.
 
 ## 1. Preparar Supabase
 
@@ -52,7 +57,7 @@ Si la semana no va de lunes a sábado, editá el arreglo `DIAS` al inicio de `li
 
 ## El panel de administración
 
-Un usuario con `rol = 'admin'` en la tabla `perfiles` ve un enlace extra al panel, en `/admin`. Ahí puede mirar el padrón de clientes de todos los usuarios con su teléfono y bajarlo a Excel, y generar los números de la rifa de cada semana.
+Un usuario con `rol = 'admin'` en la tabla `perfiles` ve un enlace extra al panel, en `/admin`. Ahí puede mirar el padrón de clientes de todos los usuarios con su teléfono y bajarlo a Excel, y generar los números de la rifa de cada semana y de cada rifa flash.
 
 Los números salen de la función `asignar_numeros_rifa`, que reparte al azar entre los clientes que completaron los seis días, **juntando los de todos los usuarios en una sola rifa**. Se sortean una sola vez y quedan guardados en `rifa_numeros`, así que volver a abrir el panel o bajar el Excel de nuevo devuelve siempre los mismos números.
 
@@ -81,3 +86,21 @@ Para hacer admin a alguien, en el SQL Editor:
 ```sql
 update public.perfiles set rol = 'admin' where email = 'correo@ejemplo.com';
 ```
+
+## Rifa Flash
+
+Necesita `supabase/migracion-rifa-flash.sql` corrido en el SQL Editor. No toca nada de Cashmana.
+
+Es la rifa que se arma cuando conviene, en vez de todas las semanas. Se entra con la pestaña **Rifa Flash** de arriba; la dirección de siempre sigue abriendo Cashmana.
+
+**Crear una rifa.** El admin toca *Nueva rifa flash* y pone el nombre (es lo que sale en la imagen), el día, la hora del sorteo y las opciones que hay que marcar. Arranca con "Sorteo 1" y "Sorteo 2", pero pueden llamarse como sea y ser cuantas sean.
+
+**Calificar.** Cada encargado elige la rifa en la lista y marca a sus clientes, igual que en Cashmana. Califica quien tiene marcadas **todas** las opciones de esa rifa: si son dos hacen falta las dos, si son tres las tres. Los clientes son los del padrón de siempre: el que se da de alta en Cashmana aparece acá sin cargarlo dos veces, siempre que esté vigente la semana de la rifa.
+
+Mientras la rifa está abierta, el admin puede renombrar, agregar y borrar opciones. Eso cambia quién califica: con una opción nueva, los que tenían todas dejan de calificar hasta que se la marquen, y al borrar una se pierden sus marcas. La pantalla avisa antes de hacerlo.
+
+**Cerrar.** A diferencia de la semana de Cashmana, la rifa flash no se cierra sola con la hora: queda abierta hasta que el admin toca *Cerrar rifa*. Cerrada, nadie marca ni cambia opciones, y no se agrega ni se quita gente de la rifa. Si se cerró antes de tiempo, *Reabrir rifa* la vuelve a abrir. Una rifa abierta se puede eliminar entera; una cerrada no, porque ya se jugó.
+
+**Números e imagen.** En el panel de administración, pestaña *Rifa flash*, o con el enlace *Números e imagen* del módulo. Funciona exactamente igual que la rifa de la semana: el mismo pozo de dos vueltas y el mismo tope de 150, los números se sortean una sola vez y quedan guardados en `flash_numeros`, el Excel sale por número y el admin puede meter a alguien a mano. La imagen dice *Rifa Flash*, el nombre de la rifa, y el día y la hora del sorteo.
+
+Las tablas son cuatro: `flash_rifas` (la rifa), `flash_opciones` (lo que hay que marcar), `flash_marcas` (una fila por opción marcada; desmarcar es borrarla) y `flash_numeros`. La regla de quién califica vive en la función `flash_calificados`.

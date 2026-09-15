@@ -2,7 +2,13 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import PanelAdmin from "@/components/PanelAdmin";
 
-export default async function Admin() {
+// Un id de rifa flash en la URL (/admin?flash=...) abre el panel directo en
+// los números de esa rifa: es a donde lleva el enlace del módulo Rifa Flash.
+// Se valida la forma para no mandarle a Postgres cualquier texto.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export default async function Admin({ searchParams }) {
+  const { flash } = await searchParams;
   const supabase = await createClient();
   const {
     data: { user },
@@ -22,5 +28,10 @@ export default async function Admin() {
 
   if (perfil?.rol !== "admin") redirect("/");
 
-  return <PanelAdmin email={user.email} />;
+  return (
+    <PanelAdmin
+      email={user.email}
+      flashInicial={typeof flash === "string" && UUID.test(flash) ? flash : null}
+    />
+  );
 }

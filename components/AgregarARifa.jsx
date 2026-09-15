@@ -16,10 +16,16 @@ const MAX_RESULTADOS = 6;
 
 // Busca en el padrón de la semana y mete al elegido en la rifa. Si la
 // persona no está en ningún lado, la crea y la mete en el mismo paso.
+//
+// Sirve para las dos rifas: `semanaISO` es la semana del padrón que se
+// ofrece (la de la rifa) y `agregar` hace la llamada a la función de
+// Postgres que corresponde. Recibe { clienteId, nombre, telefono } y
+// devuelve lo mismo que `supabase.rpc`.
 export default function AgregarARifa({
   supabase,
   semanaISO,
   yaEnRifa,
+  agregar: agregarEnRifa,
   onAgregado,
   onCerrar,
 }) {
@@ -92,11 +98,10 @@ export default function AgregarARifa({
     }
 
     setGuardando(true);
-    const { data, error } = await supabase.rpc("admin_agregar_a_rifa", {
-      p_semana: semanaISO,
-      p_cliente_id: clienteId,
-      p_nombre: clienteId ? null : buscado,
-      p_telefono: clienteId ? null : telefono.trim() || null,
+    const { data, error } = await agregarEnRifa({
+      clienteId,
+      nombre: clienteId ? null : buscado,
+      telefono: clienteId ? null : telefono.trim() || null,
     });
     setGuardando(false);
 
@@ -139,8 +144,8 @@ export default function AgregarARifa({
         <div className="flex-1">
           <h2 className="text-sm font-medium">Agregar a la rifa</h2>
           <p className="text-xs text-stone-500 mt-0.5">
-            Le sale un número del mismo pozo, sin tocar los días de la semana.
-            Queda marcado como agregado a mano.
+            Le sale un número del mismo pozo, sin tocar lo que marcó el
+            encargado. Queda marcado como agregado a mano.
           </p>
         </div>
         <button
@@ -224,7 +229,7 @@ export default function AgregarARifa({
             {resultados.length === 0
               ? `Nadie en el padrón se llama “${buscado}”.`
               : `Si ninguno de arriba es, dalo de alta como “${buscado}”.`}{" "}
-            Queda a tu nombre en el padrón, desde esta semana.
+            Queda a tu nombre en el padrón, desde la semana de esta rifa.
           </p>
           <div className="flex flex-wrap gap-2">
             <input

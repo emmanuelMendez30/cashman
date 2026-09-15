@@ -5,19 +5,17 @@ import { useRouter } from "next/navigation";
 import {
   Plus,
   Trash2,
-  Ticket,
   Check,
   AlertCircle,
   FileSpreadsheet,
   FileText,
   ChevronLeft,
   ChevronRight,
-  LogOut,
   Search,
   Lock,
 } from "lucide-react";
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import Encabezado from "@/components/Encabezado";
 import {
   DIAS,
   lunesDe,
@@ -270,12 +268,6 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
     }
   }
 
-  async function cerrarSesion() {
-    await supabase.auth.signOut();
-    router.push("/login");
-    router.refresh();
-  }
-
   const califican = clientes.filter(califica);
 
   // Desde el domingo a las 00:00 de Costa Rica la semana queda cerrada.
@@ -320,34 +312,10 @@ export default function ControlCashmana({ email, userId, esAdmin = false }) {
 
   return (
     <div className="max-w-4xl mx-auto p-4 sm:p-6">
-      <div className="flex items-start gap-3 mb-1">
-        <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
-          <Ticket size={18} className="text-amber-700" />
-        </div>
-        <div className="flex-1">
-          <h1 className="text-xl font-semibold">Control Cashmana</h1>
-        </div>
-        {esAdmin && (
-          <Link
-            href="/admin"
-            className="flex items-center gap-1.5 text-amber-700 hover:text-amber-900 text-sm transition mr-3"
-          >
-            <Ticket size={15} />
-            Panel admin
-          </Link>
-        )}
-        <button
-          onClick={cerrarSesion}
-          className="flex items-center gap-1.5 text-stone-500 hover:text-stone-800 text-sm transition"
-        >
-          <LogOut size={15} />
-          Salir
-        </button>
-      </div>
-
-      <p className="text-sm text-stone-500 mb-5 ml-12">
-        Marcá los días que cada cliente compró.
-      </p>
+      <Encabezado
+        esAdmin={esAdmin}
+        subtitulo="Marcá los días que cada cliente compró."
+      />
 
       <div className="flex items-center gap-2 mb-5">
         <button

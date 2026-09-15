@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   Users,
@@ -16,13 +16,17 @@ import {
   UserPlus,
   Trash2,
   Lock,
+  Zap,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   lunesDe,
   aISO,
+  desdeISO,
   rangoLegible,
   cierreLegible,
+  diaLegible,
+  diaCorto,
   normalizar,
   semanaEditable,
 } from "@/lib/semanas";
@@ -30,12 +34,19 @@ import { descargarExcel } from "@/lib/descargas";
 import { descargarAficheRifa } from "@/lib/afiche";
 import AgregarARifa from "@/components/AgregarARifa";
 
-export default function PanelAdmin({ email }) {
+// Las dos rifas, la de la semana y la flash, se ven y se manejan igual en
+// este panel: la misma tabla, los mismos órdenes, el mismo Excel, la misma
+// imagen y el mismo agregar a mano. Lo que cambia es de dónde salen los
+// números y hasta cuándo se pueden tocar.
+export default function PanelAdmin({ email, flashInicial = null }) {
   const supabase = createClient();
 
-  const [vista, setVista] = useState("padron");
+  const [vista, setVista] = useState(flashInicial ? "flash" : "padron");
   const [padron, setPadron] = useState([]);
   const [semana, setSemana] = useState(() => lunesDe(new Date()));
+  const [flashes, setFlashes] = useState([]);
+  const [flashesListas, setFlashesListas] = useState(false);
+  const [flashId, setFlashId] = useState(flashInicial);
   const [rifa, setRifa] = useState([]);
   const [orden, setOrden] = useState("nombre");
   const [busqueda, setBusqueda] = useState("");
@@ -44,6 +55,11 @@ export default function PanelAdmin({ email }) {
   const [agregando, setAgregando] = useState(false);
   const [error, setError] = useState("");
 
+  // Cuenta los pedidos de números para descartar respuestas viejas: si se
+  // cambia de semana, de rifa o de pestaña antes de que llegue la anterior,
+  // esa no pisa a la nueva.
+  const pedido = useRef(0);
+
   const semanaISO = aISO(semana);
 
   // Desde el domingo a las 00:00 de Costa Rica la semana es histórico y la
@@ -51,6 +67,22 @@ export default function PanelAdmin({ email }) {
   // Postgres; esto es para que la pantalla no ofrezca lo que la base va a
   // rechazar.
   const semanaAbierta = semanaEditable(semana);
+
+  const esRifa = vista === "rifa" || vista === "flash";
+  const flash = flashes.find((f) => f.id === flashId) || null;
+
+  // Hasta cuándo se puede agregar o quitar gente: la semana de Cashmana
+  // hasta el sábado a medianoche, la rifa flash hasta que el admin la
+  // cierra a mano.
+  const rifaAbierta =
+    vista === "flash" ? Boolean(flash && !flash.cerrada) : semanaAbierta;
+
+  // La semana del padrón que ofrece el buscador de agregar a mano: la de la
+  // rifa que se está mirando.
+  const vigencia =
+    vista === "flash"
+      ? flash && aISO(lunesDe(desdeISO(flash.fecha)))
+      : semanaISO;
 
   const cargarPadron = useCallback(async () => {
     setCargando(true);
@@ -68,14 +100,55 @@ export default function PanelAdmin({ email }) {
     cargarPadron();
   }, [cargarPadron]);
 
+  // Se queda en la rifa que estaba elegida (o la que vino en la URL) si
+  // sigue existiendo; si no, en la abierta más reciente.
+  const cargarFlashes = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("flash_rifas")
+      .select("id, nombre, fecha, hora_sorteo, cerrada")
+      .order("fecha", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setError("No se pudieron cargar las rifas flash. Recargá la página.");
+    } else {
+      const lista = data || [];
+      setFlashes(lista);
+      setFlashId((actual) =>
+        actual && lista.some((f) => f.id === actual)
+          ? actual
+          : ((lista.find((f) => !f.cerrada) || lista[0])?.id ?? null)
+      );
+    }
+    setFlashesListas(true);
+  }, [supabase]);
+
+  useEffect(() => {
+    if (vista === "flash") cargarFlashes();
+  }, [vista, cargarFlashes]);
+
   // Un mismo RPC sortea lo que falta y devuelve la lista completa. Como los
   // numeros ya dados nunca se tocan, llamarlo de nuevo no cambia nada: sirve
-  // igual para generar por primera vez que para volver a consultar.
+  // igual para generar por primera vez que para volver a consultar. Cada
+  // rifa tiene el suyo, con la misma forma de fila.
   const cargarRifa = useCallback(async () => {
+    const este = ++pedido.current;
+
+    if (vista !== "rifa" && vista !== "flash") return;
+
+    if (vista === "flash" && !flashId) {
+      setRifa([]);
+      setSorteando(false);
+      return;
+    }
+
     setSorteando(true);
-    const { data, error } = await supabase.rpc("asignar_numeros_rifa", {
-      p_semana: semanaISO,
-    });
+    const { data, error } =
+      vista === "flash"
+        ? await supabase.rpc("asignar_numeros_flash", { p_flash_id: flashId })
+        : await supabase.rpc("asignar_numeros_rifa", { p_semana: semanaISO });
+
+    if (este !== pedido.current) return;
 
     if (error) setError("No se pudieron generar los números. Probá de nuevo.");
     else {
@@ -83,22 +156,33 @@ export default function PanelAdmin({ email }) {
       setError("");
     }
     setSorteando(false);
-  }, [supabase, semanaISO]);
+  }, [supabase, vista, semanaISO, flashId]);
 
   useEffect(() => {
-    if (vista === "rifa") cargarRifa();
-  }, [vista, cargarRifa]);
+    cargarRifa();
+  }, [cargarRifa]);
 
-  // El formulario de agregar es de una semana y de una vista: si se cambia
+  // El formulario de agregar es de una rifa y de una vista: si se cambia
   // cualquiera de las dos, lo que quedó escrito ya no corresponde.
   useEffect(() => {
     setAgregando(false);
-  }, [semanaISO, vista]);
+  }, [semanaISO, vista, flashId]);
 
   function moverSemana(offset) {
     const nueva = new Date(semana);
     nueva.setDate(nueva.getDate() + offset * 7);
     setSemana(nueva);
+  }
+
+  function agregarEnRifa({ clienteId, nombre, telefono }) {
+    const persona = {
+      p_cliente_id: clienteId,
+      p_nombre: nombre,
+      p_telefono: telefono,
+    };
+    return vista === "flash"
+      ? supabase.rpc("admin_agregar_a_flash", { p_flash_id: flashId, ...persona })
+      : supabase.rpc("admin_agregar_a_rifa", { p_semana: semanaISO, ...persona });
   }
 
   function agregadoARifa(fila) {
@@ -119,10 +203,16 @@ export default function PanelAdmin({ email }) {
     const previos = rifa;
     setRifa(rifa.filter((c) => c.cliente_id !== cliente.cliente_id));
 
-    const { error } = await supabase.rpc("admin_quitar_de_rifa", {
-      p_semana: semanaISO,
-      p_cliente_id: cliente.cliente_id,
-    });
+    const { error } =
+      vista === "flash"
+        ? await supabase.rpc("admin_quitar_de_flash", {
+            p_flash_id: flashId,
+            p_cliente_id: cliente.cliente_id,
+          })
+        : await supabase.rpc("admin_quitar_de_rifa", {
+            p_semana: semanaISO,
+            p_cliente_id: cliente.cliente_id,
+          });
 
     if (error) {
       setError(error.message || "No se pudo quitar de la rifa. Probá de nuevo.");
@@ -185,6 +275,14 @@ export default function PanelAdmin({ email }) {
       Number(a.numero_rifa) - Number(b.numero_rifa) || a.numero - b.numero
   );
 
+  // Mientras llegan los números de otra rifa, la lista en pantalla todavía
+  // es la anterior: no se exporta hasta que termine.
+  const puedeExportar =
+    rifa.length > 0 && !sorteando && (vista !== "flash" || Boolean(flash));
+
+  const archivoRifa =
+    vista === "flash" && flash ? `rifa-flash-${flash.fecha}` : `rifa-${semanaISO}`;
+
   function exportarRifa() {
     descargarExcel(
       // Solo lo que se le canta al cliente. El orden de alta, el encargado y
@@ -196,22 +294,33 @@ export default function PanelAdmin({ email }) {
       })),
       [10, 30],
       "Rifa",
-      `rifa-${semanaISO}.xlsx`
+      `${archivoRifa}.xlsx`
     );
   }
 
   // La imagen no reemplaza al Excel: es la misma lista y el mismo orden, pero
   // en algo que se manda por chat y se lee en el teléfono sin abrir nada.
-  // La hora del sorteo es la de siempre, la que está documentada arriba de
-  // `cierreDeSemana` en lib/semanas.js.
+  // La de la semana lleva la hora de siempre, la documentada arriba de
+  // `cierreDeSemana` en lib/semanas.js; la flash, la que se cargó al crearla.
   function exportarImagenRifa() {
+    const textos =
+      vista === "flash"
+        ? {
+            titulo: "RIFA FLASH",
+            rango: flash.nombre,
+            sorteo:
+              `Sorteo el ${diaLegible(desdeISO(flash.fecha))}` +
+              (flash.hora_sorteo ? `, ${flash.hora_sorteo}` : ""),
+          }
+        : {
+            rango: rangoLegible(semana),
+            sorteo: `Sorteo el sábado ${cierreLegible(semana)}, 7:30 p.m.`,
+          };
+
     descargarAficheRifa(
       rifaPorNumero.map((c) => ({ numero: c.numero_rifa, nombre: c.nombre })),
-      {
-        rango: rangoLegible(semana),
-        sorteo: `Sorteo el sábado ${cierreLegible(semana)}, 7:30 p.m.`,
-      },
-      `rifa-${semanaISO}.png`
+      textos,
+      `${archivoRifa}.png`
     );
   }
 
@@ -220,6 +329,13 @@ export default function PanelAdmin({ email }) {
   const repetidos = rifa.filter((c) => c.numero >= 100).length;
 
   const aMano = rifa.filter((c) => c.agregado_por).length;
+
+  const pestana = (activa) =>
+    `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
+      activa
+        ? "bg-stone-800 text-white border-stone-800"
+        : "bg-white border-stone-300 hover:bg-stone-100"
+    }`;
 
   return (
     <div className="max-w-5xl mx-auto p-4 sm:p-6">
@@ -242,30 +358,20 @@ export default function PanelAdmin({ email }) {
       <p className="text-sm text-stone-500 mb-5 ml-12">{email}</p>
 
       <div className="flex flex-wrap gap-2 mb-6">
-        <button
-          onClick={() => setVista("padron")}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
-            vista === "padron"
-              ? "bg-stone-800 text-white border-stone-800"
-              : "bg-white border-stone-300 hover:bg-stone-100"
-          }`}
-        >
+        <button onClick={() => setVista("padron")} className={pestana(vista === "padron")}>
           <Users size={15} />
           Todos los clientes
         </button>
-        <button
-          onClick={() => setVista("rifa")}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
-            vista === "rifa"
-              ? "bg-stone-800 text-white border-stone-800"
-              : "bg-white border-stone-300 hover:bg-stone-100"
-          }`}
-        >
+        <button onClick={() => setVista("rifa")} className={pestana(vista === "rifa")}>
           <Dices size={15} />
           Rifa de la semana
         </button>
+        <button onClick={() => setVista("flash")} className={pestana(vista === "flash")}>
+          <Zap size={15} />
+          Rifa flash
+        </button>
 
-        {vista === "rifa" && semanaAbierta && (
+        {esRifa && rifaAbierta && (
           <button
             onClick={() => setAgregando((abierto) => !abierto)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
@@ -281,17 +387,17 @@ export default function PanelAdmin({ email }) {
 
         <button
           onClick={vista === "padron" ? exportarPadron : exportarRifa}
-          disabled={vista === "padron" ? padron.length === 0 : rifa.length === 0}
+          disabled={vista === "padron" ? padron.length === 0 : !puedeExportar}
           className="ml-auto flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition disabled:opacity-40 disabled:hover:bg-white"
         >
           <FileSpreadsheet size={15} />
           {vista === "padron" ? "Excel de todos los clientes" : "Excel de la rifa"}
         </button>
 
-        {vista === "rifa" && (
+        {esRifa && (
           <button
             onClick={exportarImagenRifa}
-            disabled={rifa.length === 0}
+            disabled={!puedeExportar}
             className="flex items-center gap-1.5 px-3 py-2 border border-stone-300 rounded-lg text-sm bg-white hover:bg-stone-100 transition disabled:opacity-40 disabled:hover:bg-white"
           >
             <ImageDown size={15} />
@@ -400,182 +506,226 @@ export default function PanelAdmin({ email }) {
         </>
       ) : (
         <>
-          <div className="flex items-center gap-2 mb-5">
-            <button
-              onClick={() => moverSemana(-1)}
-              className="p-2 border border-stone-300 rounded-lg bg-white hover:bg-stone-100 transition"
-              aria-label="Semana anterior"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <div className="text-sm font-medium px-2 min-w-[150px] text-center">
-              {rangoLegible(semana)}
+          {vista === "rifa" ? (
+            <div className="flex items-center gap-2 mb-5">
+              <button
+                onClick={() => moverSemana(-1)}
+                className="p-2 border border-stone-300 rounded-lg bg-white hover:bg-stone-100 transition"
+                aria-label="Semana anterior"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <div className="text-sm font-medium px-2 min-w-[150px] text-center">
+                {rangoLegible(semana)}
+              </div>
+              <button
+                onClick={() => moverSemana(1)}
+                className="p-2 border border-stone-300 rounded-lg bg-white hover:bg-stone-100 transition"
+                aria-label="Semana siguiente"
+              >
+                <ChevronRight size={16} />
+              </button>
             </div>
-            <button
-              onClick={() => moverSemana(1)}
-              className="p-2 border border-stone-300 rounded-lg bg-white hover:bg-stone-100 transition"
-              aria-label="Semana siguiente"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-
-          {!semanaAbierta && (
-            <div className="mb-4 flex items-start gap-2 text-sm text-stone-600 bg-stone-100 border border-stone-300 rounded-lg px-3 py-2">
-              <Lock size={16} className="mt-0.5 flex-shrink-0" />
-              <span>
-                Esta semana ya cerró y la rifa quedó como histórico. Se podía
-                agregar gente hasta la medianoche del sábado{" "}
-                {cierreLegible(semana)}.
-              </span>
-            </div>
-          )}
-
-          {agregando && (
-            <AgregarARifa
-              supabase={supabase}
-              semanaISO={semanaISO}
-              yaEnRifa={yaEnRifa}
-              onAgregado={agregadoARifa}
-              onCerrar={() => setAgregando(false)}
-            />
-          )}
-
-          {sorteando ? (
+          ) : !flashesListas ? (
             <div className="text-center text-stone-400 text-sm py-16">
-              Sorteando…
+              Cargando…
             </div>
-          ) : rifa.length === 0 ? (
+          ) : flashes.length === 0 ? (
             <div className="text-center text-stone-400 text-sm py-16 border border-dashed border-stone-300 rounded-xl">
-              Ningún cliente completó los seis días en esta semana.
-              {semanaAbierta && " Podés meter a alguien a mano con el botón de arriba."}
+              Todavía no hay rifas flash.{" "}
+              <Link href="/flash" className="text-amber-700 hover:text-amber-900 underline">
+                Se crean desde el módulo Rifa Flash
+              </Link>
+              .
             </div>
           ) : (
+            <div className="flex flex-wrap items-center gap-3 mb-5">
+              <select
+                value={flashId ?? ""}
+                onChange={(e) => setFlashId(e.target.value)}
+                aria-label="Rifa flash"
+                className="flex-1 min-w-[220px] max-w-md border border-stone-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                {flashes.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.nombre} · {diaCorto(desdeISO(f.fecha))}
+                    {f.cerrada ? " · cerrada" : ""}
+                  </option>
+                ))}
+              </select>
+              <Link
+                href="/flash"
+                className="text-sm text-stone-500 hover:text-stone-800 transition"
+              >
+                Opciones y marcas
+              </Link>
+            </div>
+          )}
+
+          {(vista === "rifa" || flash) && (
             <>
-              {repetidos > 0 && (
-                <div className="mb-4 flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+              {!rifaAbierta && (
+                <div className="mb-4 flex items-start gap-2 text-sm text-stone-600 bg-stone-100 border border-stone-300 rounded-lg px-3 py-2">
+                  <Lock size={16} className="mt-0.5 flex-shrink-0" />
                   <span>
-                    Son {rifa.length} participantes, más de los 100 números
-                    únicos, así que {repetidos}{" "}
-                    {repetidos === 1
-                      ? "cliente entró en la segunda vuelta y comparte"
-                      : "clientes entraron en la segunda vuelta y comparten"}{" "}
-                    su número con alguien de la primera. Los de segunda vuelta
-                    salen sorteados entre el 50 y el 99, y cada número se
-                    repite una sola vez. Están marcados con el número interno
-                    al lado.
+                    {vista === "flash"
+                      ? "Esta rifa flash está cerrada y quedó como histórico. Para agregar o quitar gente, reabrila desde el módulo Rifa Flash."
+                      : `Esta semana ya cerró y la rifa quedó como histórico. Se podía agregar gente hasta la medianoche del sábado ${cierreLegible(semana)}.`}
                   </span>
                 </div>
               )}
 
-              <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-stone-100 text-stone-600 text-xs uppercase tracking-wide">
-                        <th className="text-left px-4 py-3 font-medium w-24">
-                          <button
-                            onClick={() => setOrden("numero")}
-                            className={`uppercase tracking-wide hover:text-stone-900 ${
-                              orden === "numero" ? "text-stone-900 underline" : ""
-                            }`}
-                          >
-                            Número
-                          </button>
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium">
-                          <button
-                            onClick={() => setOrden("nombre")}
-                            className={`uppercase tracking-wide hover:text-stone-900 ${
-                              orden === "nombre" ? "text-stone-900 underline" : ""
-                            }`}
-                          >
-                            Cliente
-                          </button>
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium w-28">
-                          <button
-                            onClick={() => setOrden("alta")}
-                            className={`uppercase tracking-wide hover:text-stone-900 ${
-                              orden === "alta" ? "text-stone-900 underline" : ""
-                            }`}
-                          >
-                            Orden alta
-                          </button>
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium">
-                          Teléfono
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium">
-                          Encargado
-                        </th>
-                        <th className="w-10" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rifaVisible.map((c) => (
-                        <tr
-                          key={c.cliente_id}
-                          className="border-t border-stone-100 hover:bg-stone-50"
-                        >
-                          <td className="px-4 py-2.5">
-                            <span className="font-mono font-semibold text-base bg-amber-100 text-amber-900 px-2 py-0.5 rounded">
-                              {c.numero_rifa}
-                            </span>
-                            {c.numero >= 100 && (
-                              <span className="ml-2 text-xs text-stone-400">
-                                ({c.numero})
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 font-medium">
-                            {c.nombre}
-                            {c.agregado_por && (
-                              <span
-                                title={`Agregado a mano por ${c.agregado_por}`}
-                                className="ml-2 align-middle bg-amber-100 text-amber-800 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
-                              >
-                                A mano
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-stone-400 text-xs font-mono">
-                            #{posicionAlta.get(c.cliente_id)}
-                          </td>
-                          <td className="px-4 py-2.5 text-stone-600">
-                            {c.telefono || (
-                              <span className="text-stone-300">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-stone-500 text-xs">
-                            {c.duenio}
-                          </td>
-                          <td className="px-2 py-2.5 text-center">
-                            {c.agregado_por && semanaAbierta && (
-                              <button
-                                onClick={() => quitarDeRifa(c)}
-                                className="text-stone-300 hover:text-red-500 transition"
-                                aria-label={`Quitar a ${c.nombre} de la rifa`}
-                              >
-                                <Trash2 size={15} />
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              {agregando && vigencia && (
+                <AgregarARifa
+                  supabase={supabase}
+                  semanaISO={vigencia}
+                  yaEnRifa={yaEnRifa}
+                  agregar={agregarEnRifa}
+                  onAgregado={agregadoARifa}
+                  onCerrar={() => setAgregando(false)}
+                />
+              )}
 
-              <div className="mt-4 text-sm text-stone-500">
-                {rifa.length} participantes con número asignado
-                {aMano > 0 &&
-                  ` · ${aMano} ${aMano === 1 ? "agregado" : "agregados"} a mano`}
-                {filtro &&
-                  ` · mostrando ${rifaVisible.length}, el Excel baja todos`}
-              </div>
+              {sorteando ? (
+                <div className="text-center text-stone-400 text-sm py-16">
+                  Sorteando…
+                </div>
+              ) : rifa.length === 0 ? (
+                <div className="text-center text-stone-400 text-sm py-16 border border-dashed border-stone-300 rounded-xl">
+                  {vista === "flash"
+                    ? "Ningún cliente tiene marcadas todas las opciones de esta rifa."
+                    : "Ningún cliente completó los seis días en esta semana."}
+                  {rifaAbierta &&
+                    " Podés meter a alguien a mano con el botón de arriba."}
+                </div>
+              ) : (
+                <>
+                  {repetidos > 0 && (
+                    <div className="mb-4 flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                      <span>
+                        Son {rifa.length} participantes, más de los 100 números
+                        únicos, así que {repetidos}{" "}
+                        {repetidos === 1
+                          ? "cliente entró en la segunda vuelta y comparte"
+                          : "clientes entraron en la segunda vuelta y comparten"}{" "}
+                        su número con alguien de la primera. Los de segunda
+                        vuelta salen sorteados entre el 50 y el 99, y cada
+                        número se repite una sola vez. Están marcados con el
+                        número interno al lado.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="bg-white border border-stone-200 rounded-xl overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-stone-100 text-stone-600 text-xs uppercase tracking-wide">
+                            <th className="text-left px-4 py-3 font-medium w-24">
+                              <button
+                                onClick={() => setOrden("numero")}
+                                className={`uppercase tracking-wide hover:text-stone-900 ${
+                                  orden === "numero" ? "text-stone-900 underline" : ""
+                                }`}
+                              >
+                                Número
+                              </button>
+                            </th>
+                            <th className="text-left px-4 py-3 font-medium">
+                              <button
+                                onClick={() => setOrden("nombre")}
+                                className={`uppercase tracking-wide hover:text-stone-900 ${
+                                  orden === "nombre" ? "text-stone-900 underline" : ""
+                                }`}
+                              >
+                                Cliente
+                              </button>
+                            </th>
+                            <th className="text-left px-4 py-3 font-medium w-28">
+                              <button
+                                onClick={() => setOrden("alta")}
+                                className={`uppercase tracking-wide hover:text-stone-900 ${
+                                  orden === "alta" ? "text-stone-900 underline" : ""
+                                }`}
+                              >
+                                Orden alta
+                              </button>
+                            </th>
+                            <th className="text-left px-4 py-3 font-medium">
+                              Teléfono
+                            </th>
+                            <th className="text-left px-4 py-3 font-medium">
+                              Encargado
+                            </th>
+                            <th className="w-10" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rifaVisible.map((c) => (
+                            <tr
+                              key={c.cliente_id}
+                              className="border-t border-stone-100 hover:bg-stone-50"
+                            >
+                              <td className="px-4 py-2.5">
+                                <span className="font-mono font-semibold text-base bg-amber-100 text-amber-900 px-2 py-0.5 rounded">
+                                  {c.numero_rifa}
+                                </span>
+                                {c.numero >= 100 && (
+                                  <span className="ml-2 text-xs text-stone-400">
+                                    ({c.numero})
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 font-medium">
+                                {c.nombre}
+                                {c.agregado_por && (
+                                  <span
+                                    title={`Agregado a mano por ${c.agregado_por}`}
+                                    className="ml-2 align-middle bg-amber-100 text-amber-800 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
+                                  >
+                                    A mano
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-stone-400 text-xs font-mono">
+                                #{posicionAlta.get(c.cliente_id)}
+                              </td>
+                              <td className="px-4 py-2.5 text-stone-600">
+                                {c.telefono || (
+                                  <span className="text-stone-300">—</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 text-stone-500 text-xs">
+                                {c.duenio}
+                              </td>
+                              <td className="px-2 py-2.5 text-center">
+                                {c.agregado_por && rifaAbierta && (
+                                  <button
+                                    onClick={() => quitarDeRifa(c)}
+                                    className="text-stone-300 hover:text-red-500 transition"
+                                    aria-label={`Quitar a ${c.nombre} de la rifa`}
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 text-sm text-stone-500">
+                    {rifa.length} participantes con número asignado
+                    {aMano > 0 &&
+                      ` · ${aMano} ${aMano === 1 ? "agregado" : "agregados"} a mano`}
+                    {filtro &&
+                      ` · mostrando ${rifaVisible.length}, el Excel baja todos`}
+                  </div>
+                </>
+              )}
             </>
           )}
         </>
