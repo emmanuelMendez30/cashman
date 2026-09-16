@@ -29,6 +29,12 @@ import NuevaRifaFlash from "@/components/NuevaRifaFlash";
 
 const mayuscula = (texto) => texto.charAt(0).toUpperCase() + texto.slice(1);
 
+// Hasta 50 participantes le tocan dos números a cada uno en vez de uno. La
+// regla de verdad vive en `asignar_numeros_flash`, en Postgres, y se aplica
+// al cerrar la rifa; esto es para poder avisarlo antes de cerrar. El 50 sale
+// de que 50 x 2 = 100, los números únicos de la primera vuelta.
+const TOPE_DOS = 50;
+
 // El módulo Rifa Flash: rifas de un solo día que el admin arma cuando
 // conviene, cada una con sus propias opciones para marcar. Los encargados
 // marcan a sus clientes igual que en Cashmana; el admin además crea las
@@ -68,7 +74,7 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
     async (seleccionar = null) => {
       const { data, error } = await supabase
         .from("flash_rifas")
-        .select("id, nombre, fecha, hora_sorteo, cerrada")
+        .select("id, nombre, fecha, hora_sorteo, cerrada, numeros_por_persona")
         .order("fecha", { ascending: false })
         .order("created_at", { ascending: false });
 
@@ -366,9 +372,21 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
   }
 
   async function cambiarCierre(cerrar) {
+    // Cerrar es lo que deja firme el conteo, y con el conteo firme se decide
+    // si a cada uno le tocan dos números.
+    const cuantos = clientes.filter(califica).length;
+    const dobles =
+      cerrar &&
+      rifa.numeros_por_persona === 1 &&
+      cuantos > 0 &&
+      cuantos <= TOPE_DOS;
+
     const aviso = cerrar
       ? `Cerrar "${rifa.nombre}". Nadie va a poder marcar ni cambiar opciones, ` +
-        "ni agregar o quitar gente de la rifa, hasta que la reabras."
+        "ni agregar o quitar gente de la rifa, hasta que la reabras." +
+        (dobles
+          ? ` Como califican ${cuantos}, que son ${TOPE_DOS} o menos, a cada uno le van a tocar dos números: el que ya tiene y uno más.`
+          : "")
       : `Reabrir "${rifa.nombre}". Los encargados vuelven a poder marcar.`;
 
     if (!window.confirm(aviso)) return;
@@ -502,6 +520,11 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
                 {rifa.hora_sorteo && (
                   <span className="text-stone-500">
                     Sorteo {rifa.hora_sorteo}
+                  </span>
+                )}
+                {rifa.numeros_por_persona > 1 && (
+                  <span className="text-stone-500">
+                    {rifa.numeros_por_persona} números por persona
                   </span>
                 )}
                 <span

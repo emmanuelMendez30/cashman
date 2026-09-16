@@ -103,6 +103,12 @@ Es la rifa que se arma cuando conviene, en vez de todas las semanas. Se entra co
 
 **Cerrar.** A diferencia de la semana de Cashmana, la rifa flash no se cierra sola con la hora: queda abierta hasta que el admin toca *Cerrar rifa*. Cerrada, nadie marca ni cambia opciones, y no se agrega ni se quita gente de la rifa. Si se cerró antes de tiempo, *Reabrir rifa* la vuelve a abrir. Una rifa abierta se puede eliminar entera; una cerrada no, porque ya se jugó.
 
-**Números e imagen.** En el panel de administración, pestaña *Rifa flash*, o con el enlace *Números e imagen* del módulo. Funciona exactamente igual que la rifa de la semana: el mismo pozo de dos vueltas y el mismo tope de 150, los números se sortean una sola vez y quedan guardados en `flash_numeros`, el Excel sale por número y el admin puede meter a alguien a mano. La imagen dice *Rifa Flash*, el nombre de la rifa, y el día y la hora del sorteo.
+**Números e imagen.** En el panel de administración, pestaña *Rifa flash*, o con el enlace *Números e imagen* del módulo. El pozo es el mismo de la rifa de la semana: dos vueltas y tope de 150 números, sorteados una sola vez y guardados en `flash_numeros`, con el Excel por número y el agregar a mano del admin. La imagen va a nombre de **Sr.Cash**, no de Cashmana, y debajo dice *Rifa Flash*, el nombre de la rifa y el día y la hora del sorteo.
+
+**Dos números por persona.** Cuando la rifa es chica, a cada uno le tocan dos. La decisión la toma el sorteo solo, al cerrar la rifa, que es cuando el conteo de participantes queda firme: **50 o menos, dos números para cada uno; más de 50, uno solo**. El 50 sale de que 50 × 2 = 100, justo los números únicos de la primera vuelta, así que hasta ahí nadie comparte número con nadie; pasando de 50 habría que repetir, y es preferible uno solo antes que repetidos.
+
+Se decide una vez y solo sube: de uno puede pasar a dos, nunca al revés, porque un número que ya se cantó no se saca. Si la rifa se reabre y entra más gente, sigue siendo de dos y a los nuevos también les tocan dos. Al repartir, los números que alguien ya tiene no se tocan: solo se le dan los que le faltan. Con dos números el tope baja de 150 a 75 personas por rifa.
+
+En la tabla, el Excel y la imagen la persona aparece una sola vez con sus dos números al lado. Necesita `supabase/migracion-flash-dos-numeros.sql`.
 
 Las tablas son cuatro: `flash_rifas` (la rifa), `flash_opciones` (lo que hay que marcar), `flash_marcas` (una fila por opción marcada; desmarcar es borrarla) y `flash_numeros`. La regla de quién califica vive en la función `flash_calificados`.

@@ -105,7 +105,7 @@ export default function PanelAdmin({ email, flashInicial = null }) {
   const cargarFlashes = useCallback(async () => {
     const { data, error } = await supabase
       .from("flash_rifas")
-      .select("id, nombre, fecha, hora_sorteo, cerrada")
+      .select("id, nombre, fecha, hora_sorteo, cerrada, numeros_por_persona")
       .order("fecha", { ascending: false })
       .order("created_at", { ascending: false });
 
@@ -240,20 +240,63 @@ export default function PanelAdmin({ email, flashInicial = null }) {
     new Date(a.creado) - new Date(b.creado) ||
     a.nombre.localeCompare(b.nombre, "es");
 
-  const rifaOrdenada = [...rifa].sort((a, b) => {
+  // La base devuelve una fila por numero, y en la rifa flash una persona
+  // puede tener dos. En pantalla y en los archivos va una sola linea por
+  // persona, con sus numeros juntos.
+  const porCliente = new Map();
+  const participantes = [];
+
+  for (const fila of rifa) {
+    let participante = porCliente.get(fila.cliente_id);
+
+    if (!participante) {
+      participante = {
+        cliente_id: fila.cliente_id,
+        nombre: fila.nombre,
+        telefono: fila.telefono,
+        duenio: fila.duenio,
+        creado: fila.creado,
+        agregado_por: fila.agregado_por,
+        numeros: [],
+      };
+      porCliente.set(fila.cliente_id, participante);
+      participantes.push(participante);
+    }
+
+    participante.numeros.push({
+      numero: fila.numero,
+      numero_rifa: fila.numero_rifa,
+    });
+  }
+
+  // Los numeros de cada uno, de menor a mayor por el que se canta. El menor
+  // es con el que la persona entra en el orden por numero.
+  for (const p of participantes) {
+    p.numeros.sort(
+      (a, b) =>
+        Number(a.numero_rifa) - Number(b.numero_rifa) || a.numero - b.numero
+    );
+    p.menor = Number(p.numeros[0].numero_rifa);
+    p.menorInterno = p.numeros[0].numero;
+  }
+
+  const variosNumeros = participantes.some((c) => c.numeros.length > 1);
+  const totalNumeros = rifa.length;
+
+  const participantesOrdenados = [...participantes].sort((a, b) => {
     if (orden === "nombre") return a.nombre.localeCompare(b.nombre, "es");
     if (orden === "alta") return porAlta(a, b);
-    return a.numero - b.numero;
+    return a.menor - b.menor || a.menorInterno - b.menorInterno;
   });
 
   // Posicion de cada cliente en el orden de alta, para mostrarla como #.
   const posicionAlta = new Map(
-    [...rifa].sort(porAlta).map((c, i) => [c.cliente_id, i + 1])
+    [...participantes].sort(porAlta).map((c, i) => [c.cliente_id, i + 1])
   );
 
   // Para que el buscador del formulario no ofrezca a alguien que ya tiene
   // número: la funcion lo rechazaria igual, pero es mejor no ofrecerlo.
-  const yaEnRifa = new Set(rifa.map((c) => c.cliente_id));
+  const yaEnRifa = new Set(participantes.map((c) => c.cliente_id));
 
   // El buscador filtra lo que se ve en pantalla, no lo que se exporta: el
   // Excel de la rifa y el del padron son documentos que se reparten, y bajar
@@ -262,7 +305,7 @@ export default function PanelAdmin({ email, flashInicial = null }) {
   const coincide = (c) => !filtro || normalizar(c.nombre).includes(filtro);
 
   const padronVisible = padron.filter(coincide);
-  const rifaVisible = rifaOrdenada.filter(coincide);
+  const rifaVisible = participantesOrdenados.filter(coincide);
 
   // El Excel de la rifa sale siempre por numero, sin importar como este
   // ordenada la pantalla: es el papel con el que se busca al ganador.
@@ -270,9 +313,8 @@ export default function PanelAdmin({ email, flashInicial = null }) {
   // columna quede de verdad de menor a mayor (el interno salta a 150 en la
   // segunda vuelta). Los dos que comparten numero caen juntos, y adelante
   // va el de la primera vuelta.
-  const rifaPorNumero = [...rifa].sort(
-    (a, b) =>
-      Number(a.numero_rifa) - Number(b.numero_rifa) || a.numero - b.numero
+  const rifaPorNumero = [...participantes].sort(
+    (a, b) => a.menor - b.menor || a.menorInterno - b.menorInterno
   );
 
   // Mientras llegan los números de otra rifa, la lista en pantalla todavía
@@ -289,10 +331,12 @@ export default function PanelAdmin({ email, flashInicial = null }) {
       // el numero interno siguen visibles en pantalla para auditar el sorteo,
       // pero no tienen por que viajar en el archivo que se reparte.
       rifaPorNumero.map((c) => ({
-        Número: c.numero_rifa,
+        [variosNumeros ? "Números" : "Número"]: c.numeros
+          .map((n) => n.numero_rifa)
+          .join(", "),
         Cliente: c.nombre,
       })),
-      [10, 30],
+      [variosNumeros ? 16 : 10, 30],
       "Rifa",
       `${archivoRifa}.xlsx`
     );
@@ -306,6 +350,7 @@ export default function PanelAdmin({ email, flashInicial = null }) {
     const textos =
       vista === "flash"
         ? {
+            negocio: "Sr.Cash",
             titulo: "RIFA FLASH",
             rango: flash.nombre,
             sorteo:
@@ -318,17 +363,20 @@ export default function PanelAdmin({ email, flashInicial = null }) {
           };
 
     descargarAficheRifa(
-      rifaPorNumero.map((c) => ({ numero: c.numero_rifa, nombre: c.nombre })),
+      rifaPorNumero.map((c) => ({
+        numeros: c.numeros.map((n) => n.numero_rifa),
+        nombre: c.nombre,
+      })),
       textos,
       `${archivoRifa}.png`
     );
   }
 
-  // Cuando pasan de 100 participantes, el numero interno sigue subiendo
-  // (100, 101...) pero el que se canta es el modulo, asi que se repite.
+  // Cuando se pasan los 100 numeros repartidos, el interno sigue subiendo
+  // (150, 151...) pero el que se canta es el modulo, asi que se repite.
   const repetidos = rifa.filter((c) => c.numero >= 100).length;
 
-  const aMano = rifa.filter((c) => c.agregado_por).length;
+  const aMano = participantes.filter((c) => c.agregado_por).length;
 
   const pestana = (activa) =>
     `flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition ${
@@ -604,15 +652,15 @@ export default function PanelAdmin({ email, flashInicial = null }) {
                     <div className="mb-4 flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                       <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
                       <span>
-                        Son {rifa.length} participantes, más de los 100 números
+                        Se repartieron {totalNumeros} números, más de los 100
                         únicos, así que {repetidos}{" "}
                         {repetidos === 1
-                          ? "cliente entró en la segunda vuelta y comparte"
-                          : "clientes entraron en la segunda vuelta y comparten"}{" "}
-                        su número con alguien de la primera. Los de segunda
-                        vuelta salen sorteados entre el 50 y el 99, y cada
-                        número se repite una sola vez. Están marcados con el
-                        número interno al lado.
+                          ? "salió de la segunda vuelta y comparte"
+                          : "salieron de la segunda vuelta y comparten"}{" "}
+                        número con alguien de la primera. Los de segunda vuelta
+                        se sortean entre el 50 y el 99, y cada número se repite
+                        una sola vez. Están marcados con el número interno al
+                        lado.
                       </span>
                     </div>
                   )}
@@ -622,7 +670,7 @@ export default function PanelAdmin({ email, flashInicial = null }) {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="bg-stone-100 text-stone-600 text-xs uppercase tracking-wide">
-                            <th className="text-left px-4 py-3 font-medium w-24">
+                            <th className="text-left px-4 py-3 font-medium w-36">
                               <button
                                 onClick={() => setOrden("numero")}
                                 className={`uppercase tracking-wide hover:text-stone-900 ${
@@ -668,14 +716,21 @@ export default function PanelAdmin({ email, flashInicial = null }) {
                               className="border-t border-stone-100 hover:bg-stone-50"
                             >
                               <td className="px-4 py-2.5">
-                                <span className="font-mono font-semibold text-base bg-amber-100 text-amber-900 px-2 py-0.5 rounded">
-                                  {c.numero_rifa}
-                                </span>
-                                {c.numero >= 100 && (
-                                  <span className="ml-2 text-xs text-stone-400">
-                                    ({c.numero})
-                                  </span>
-                                )}
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {c.numeros.map((n) => (
+                                    <span
+                                      key={n.numero}
+                                      className="font-mono font-semibold text-base bg-amber-100 text-amber-900 px-2 py-0.5 rounded"
+                                    >
+                                      {n.numero_rifa}
+                                      {n.numero >= 100 && (
+                                        <span className="ml-1 text-xs font-normal text-amber-700">
+                                          ({n.numero})
+                                        </span>
+                                      )}
+                                    </span>
+                                  ))}
+                                </div>
                               </td>
                               <td className="px-4 py-2.5 font-medium">
                                 {c.nombre}
@@ -718,12 +773,23 @@ export default function PanelAdmin({ email, flashInicial = null }) {
                   </div>
 
                   <div className="mt-4 text-sm text-stone-500">
-                    {rifa.length} participantes con número asignado
+                    {participantes.length} participantes con número asignado
+                    {variosNumeros && ` · ${totalNumeros} números en total`}
                     {aMano > 0 &&
                       ` · ${aMano} ${aMano === 1 ? "agregado" : "agregados"} a mano`}
                     {filtro &&
                       ` · mostrando ${rifaVisible.length}, el Excel baja todos`}
                   </div>
+
+                  {vista === "flash" &&
+                    rifaAbierta &&
+                    flash?.numeros_por_persona === 1 && (
+                      <div className="mt-2 text-xs text-stone-500">
+                        Por ahora va un número por persona. Al cerrar la rifa,
+                        si los participantes son 50 o menos, a cada uno le sale
+                        un segundo número sin que cambie el que ya tiene.
+                      </div>
+                    )}
                 </>
               )}
             </>
