@@ -53,6 +53,10 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
   // lista anterior, esa no pisa a la nueva.
   const pedido = useRef(0);
 
+  // Lo que había en el campo antes de tocarlo: sirve para no ir a guardar
+  // algo que no cambió, y para avisar si el día nuevo cae en otra semana.
+  const valorPrevio = useRef(null);
+
   const rifa = rifas.find((r) => r.id === rifaId) || null;
   const abierta = Boolean(rifa && !rifa.cerrada);
   const rifaFecha = rifa?.fecha;
@@ -93,8 +97,9 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
   // rifa. Es la misma consulta que Cashmana con `flash_marcas` en lugar de
   // `marcas`: el padrón es uno solo para los dos módulos.
   //
-  // El admin ve los de todos, como en Cashmana: el RLS se lo permite solo
-  // para leer, así que los ajenos se muestran sin controles.
+  // El admin ve los de todos y, a diferencia de Cashmana, también los puede
+  // marcar: si un encargado falta o se olvida, alguien tiene que poder
+  // hacerlo por él.
   const cargar = useCallback(async () => {
     const este = ++pedido.current;
 
@@ -165,7 +170,10 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
   const califica = (c) =>
     opciones.length > 0 && opciones.every((o) => c.marcadas.has(o.id));
 
-  const puedeMarcar = (c) => c.esMio && abierta;
+  // El encargado marca a los suyos; el admin, a cualquiera. Las policies de
+  // Postgres dicen lo mismo: esto es para que la pantalla no ofrezca lo que
+  // la base va a rechazar.
+  const puedeMarcar = (c) => (esAdmin || c.esMio) && abierta;
 
   async function marcar(cliente, opcionId) {
     const estaba = cliente.marcadas.has(opcionId);
@@ -293,6 +301,70 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
     }
   }
 
+  function guardarPrevio(e) {
+    valorPrevio.current = e.target.value;
+  }
+
+  function editarRifa(campo, valor) {
+    setRifas((prev) =>
+      prev.map((r) => (r.id === rifaId ? { ...r, [campo]: valor } : r))
+    );
+  }
+
+  // El nombre y la hora son lo que sale en la imagen, y el día decide qué
+  // clientes entran, así que los tres se pueden corregir después de crear
+  // la rifa. Se guarda al salir del campo, como el padrón de Cashmana.
+  async function guardarRifa(campo) {
+    const valor = (rifa[campo] ?? "").trim();
+    const previo = valorPrevio.current;
+
+    if (previo !== null && valor === previo.trim()) return;
+
+    if (!valor && campo !== "hora_sorteo") {
+      setError(
+        campo === "nombre"
+          ? "La rifa necesita un nombre."
+          : "La rifa necesita un día."
+      );
+      cargarRifas();
+      return;
+    }
+
+    // Cambiar de semana cambia la lista: el padrón muestra a los que
+    // estaban vigentes esa semana, así que puede entrar o salir gente, y
+    // alguien que ya tenía número puede dejar de aparecer.
+    if (campo === "fecha" && previo) {
+      const otraSemana =
+        aISO(lunesDe(desdeISO(valor))) !== aISO(lunesDe(desdeISO(previo)));
+
+      if (
+        otraSemana &&
+        !window.confirm(
+          "El día nuevo cae en otra semana. La lista muestra a los clientes " +
+            "que estaban vigentes esa semana, así que puede cambiar quién " +
+            "aparece y quién califica. ¿Lo cambio igual?"
+        )
+      ) {
+        cargarRifas();
+        return;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("flash_rifas")
+      .update({ [campo]: campo === "hora_sorteo" ? valor || null : valor })
+      .eq("id", rifa.id)
+      .select("id");
+
+    if (error || !data?.length) {
+      setError("No se pudo guardar el cambio. Probá de nuevo.");
+      cargarRifas();
+    } else {
+      editarRifa(campo, valor);
+      setError("");
+    }
+  }
+
   async function cambiarCierre(cerrar) {
     const aviso = cerrar
       ? `Cerrar "${rifa.nombre}". Nadie va a poder marcar ni cambiar opciones, ` +
@@ -353,6 +425,9 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
 
   const botonAccion =
     "flex items-center gap-1.5 px-3 py-2 border rounded-lg text-sm bg-white transition";
+
+  const campoRifa =
+    "mt-1 w-full border border-stone-300 rounded-lg px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-stone-50 disabled:text-stone-500";
 
   return (
     <div className="max-w-4xl mx-auto p-4 sm:p-6">
@@ -460,7 +535,7 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
                   <div className="flex flex-wrap items-center gap-2 mb-3">
                     <ListChecks size={16} className="text-stone-500" />
                     <h2 className="text-sm font-medium flex-1">
-                      Opciones para calificar
+                      Ajustes de la rifa
                     </h2>
                     <Link
                       href={`/admin?flash=${rifa.id}`}
@@ -469,6 +544,57 @@ export default function RifaFlash({ email, userId, esAdmin = false }) {
                       <Dices size={15} />
                       Números e imagen
                     </Link>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] mb-4 pb-4 border-b border-stone-100">
+                    <label className="text-xs text-stone-500">
+                      Nombre
+                      <input
+                        type="text"
+                        value={rifa.nombre}
+                        onChange={(e) => editarRifa("nombre", e.target.value)}
+                        onFocus={guardarPrevio}
+                        onBlur={() => guardarRifa("nombre")}
+                        disabled={!abierta}
+                        className={campoRifa}
+                      />
+                    </label>
+                    <label className="text-xs text-stone-500">
+                      Día
+                      <input
+                        type="date"
+                        value={rifa.fecha}
+                        // Un día vacío no se guarda ni se muestra: dejaría la
+                        // rifa sin fecha, que es de donde sale la semana del
+                        // padrón. Para cambiarlo se elige otro.
+                        onChange={(e) =>
+                          e.target.value && editarRifa("fecha", e.target.value)
+                        }
+                        onFocus={guardarPrevio}
+                        onBlur={() => guardarRifa("fecha")}
+                        disabled={!abierta}
+                        className={campoRifa}
+                      />
+                    </label>
+                    <label className="text-xs text-stone-500">
+                      Hora del sorteo
+                      <input
+                        type="text"
+                        value={rifa.hora_sorteo ?? ""}
+                        onChange={(e) =>
+                          editarRifa("hora_sorteo", e.target.value)
+                        }
+                        onFocus={guardarPrevio}
+                        onBlur={() => guardarRifa("hora_sorteo")}
+                        disabled={!abierta}
+                        placeholder="Opcional"
+                        className={`${campoRifa} sm:w-32`}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="text-xs text-stone-500 mb-2">
+                    Opciones para calificar
                   </div>
 
                   <div className="flex flex-wrap gap-2">

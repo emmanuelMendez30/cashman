@@ -97,7 +97,9 @@ Es la rifa que se arma cuando conviene, en vez de todas las semanas. Se entra co
 
 **Calificar.** Cada encargado elige la rifa en la lista y marca a sus clientes, igual que en Cashmana. Califica quien tiene marcadas **todas** las opciones de esa rifa: si son dos hacen falta las dos, si son tres las tres. Los clientes son los del padrón de siempre: el que se da de alta en Cashmana aparece acá sin cargarlo dos veces, siempre que esté vigente la semana de la rifa.
 
-Mientras la rifa está abierta, el admin puede renombrar, agregar y borrar opciones. Eso cambia quién califica: con una opción nueva, los que tenían todas dejan de calificar hasta que se la marquen, y al borrar una se pierden sus marcas. La pantalla avisa antes de hacerlo.
+**Acá el admin sí marca.** A diferencia de Cashmana, donde mira sin editar, en la rifa flash el admin puede marcar y desmarcar a los clientes de cualquier encargado. Es para el día que uno falta, se olvida o se equivoca, y no hay tiempo de esperarlo. Lo permiten las policies de `supabase/migracion-flash-admin-marca.sql`.
+
+**Corregir la rifa.** Mientras está abierta, el admin puede cambiar el nombre, el día y la hora desde *Ajustes de la rifa*, y renombrar, agregar y borrar opciones. Dos avisos que da la pantalla antes de seguir: cambiar el día a otra semana cambia qué clientes aparecen, porque la lista es la del padrón vigente esa semana; y tocar las opciones cambia quién califica, porque con una opción nueva los que tenían todas dejan de calificar hasta que se la marquen, y al borrar una se pierden sus marcas.
 
 **Cerrar.** A diferencia de la semana de Cashmana, la rifa flash no se cierra sola con la hora: queda abierta hasta que el admin toca *Cerrar rifa*. Cerrada, nadie marca ni cambia opciones, y no se agrega ni se quita gente de la rifa. Si se cerró antes de tiempo, *Reabrir rifa* la vuelve a abrir. Una rifa abierta se puede eliminar entera; una cerrada no, porque ya se jugó.
 
